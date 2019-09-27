@@ -12,11 +12,15 @@ module.exports = (log) => {
         recursiveObjWalk : (obj, payloadFn, path = []) => {
             for (let key of Object.keys(obj)) {
               if (!(obj[key] && typeof obj[key] === "object")) {
-                if (payloadFn(obj[key], path, key)) {
+                const payloadFnResult = payloadFn(obj[key], path, key)
+                if (payloadFnResult===true) {
                   continue;
-                } else {
+                };
+                
+                if (payloadFnResult===false) {
                   return;
-                }
+                };
+
               }
               impl.recursiveObjWalk(obj[key], payloadFn, [...path, key]);
             }
@@ -65,15 +69,7 @@ module.exports = (log) => {
               str1 = str1.split(JSON.stringify(diffEl.mask)).join(JSON.stringify(diffEl.obj));
             }
             template = JSON.parse(str1);
-            //  const payloadFn = (val, path, key) => {
-            //      for (diffEl of diffMaskAst) {
-            //          if (JSON.stringify(diffEl.mask) === JSON.stringify(val)) {
-            //              getObjByPathMutable(template,[...path]) = diffEl.obj;
-            //          }
-            //      }
-            //      return true;
-            //  };
-            //  recursiveObjWalk(template,payloadFn);
+
             return { debug, template };
           },
           recursiveCleanAst : (astObj) => {

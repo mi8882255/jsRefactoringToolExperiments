@@ -124,7 +124,37 @@ module.exports = (log, modHelper, fs, parse, generate) => {
 			return {
 				code: JSON.stringify(JSON.parse(selectionContent), null, 2)
 			}
-		}
+    },
+    run:(selectionContent)=>{
+      const result = eval(selectionContent);
+      return {
+        raw: selectionContent, 
+        debug: `/*\n${result}\n*/`
+      }
+    },
+    get_vars:(selectionContent)=>{
+      const ast = helperFunctions.parseAstFromSelectedCode(selectionContent);
+      payloadFn = (val, path, key)  =>{
+        if (val.type === "ArrowFunctionExpression") {
+
+        }
+        if (val.type === "FunctionExpression") {
+          //get .params[].name
+        }
+
+        if (val.type === "VariableDeclarator") {
+          //get .id.name
+        }
+
+        //unsafe vars
+        if (val.type === "AssignmentExpression") {
+          //get .left.name
+        }
+        // if (val.)
+      }
+
+      modHelper.recursiveObjWalk(ast, payloadFn, path = [])
+    },
   };
 
   // noinspection UnnecessaryLocalVariableJS
