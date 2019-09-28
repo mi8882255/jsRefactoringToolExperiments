@@ -82,6 +82,31 @@ module.exports = (log) => {
                 impl.recursiveCleanAst(astObj[key]);
               }
             }
+          },
+          jsonToStringArray: (obj, withValues = false) => {
+            const arr = []; 
+            const payloadFn = (val, path, key) => {
+                let str = [typeof val, ... path, key].join(':')+'::'+ (withValues? val: '')
+                arr.push(str);
+                return true;
+            };
+            impl.recursiveObjWalk(obj, payloadFn);
+
+            return arr
+          },
+          searchInStrArrayRe(strArr, re, all = false) {
+            results = [];
+            for (key of Object.keys(strArr)) {
+                if (re.test(strArr[key])) {
+                    if (all) {
+                        results.push(key)
+                    } else {
+                        return [key]
+                    }
+                }
+            }
+
+            return results;
           }
     };
     

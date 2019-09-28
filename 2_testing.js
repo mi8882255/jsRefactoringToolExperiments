@@ -21,7 +21,7 @@ ast = [
 				{
 					"type": "StringLiteral",
 					"extra": {
-						"rawValue": "sasai",
+						"rawValue": 1,
 						"raw": "'sasai'"
 					},
 					"value": "sasai"
@@ -30,17 +30,13 @@ ast = [
 		}
 	}
 ];
+const simpleShow  = a => console.log(a)
+
 const dataMod = require('./data_modifications')({info:console.log});
 
-// console.log(obj1.mask.program.body);
-// console.log(ast);
-res = dataMod.mutate(ast, obj1.mask.program.body, obj1.template.program.body)
-// res.debug.map(txt => {console.log(txt);console.log()});
-// console.log();
-console.log(JSON.stringify(res.template));
+jArr = dataMod.jsonToStringArray(ast,true);
+// jArr.map(simpleShow);
+const getElByIndex = i => jArr[i]
 
-// aa= '[{"type":"ExpressionStatement","expression":{"type":"CallExpression","callee":{"type":"MemberExpression","object":{"type":"Identifier","name":"log"},"property":{"type":"Identifier","name":"info"},"computed":false},"arguments":[{"type":"Identifier","name":"__ph"}]}}]';
-//
-// bb = '{"type":"Identifier","name":"__ph"}';
-// aa.replace(bb, '____azazazaz____')
-// console.log(aa);
+dataMod.searchInStrArrayRe(jArr,/type::Identifier/,true).map(e => simpleShow(getElByIndex(e)))
+
