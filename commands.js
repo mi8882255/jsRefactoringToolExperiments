@@ -126,7 +126,12 @@ module.exports = (log, modHelper, fs, parse, generate) => {
 			}
     },
     run:(selectionContent)=>{
-      const result = eval(selectionContent);
+      let evalScript = '';
+      // evalScript += 'out = "";console = {log: (txt) => out+=txt}; res =' ;
+      evalScript += selectionContent;
+      // evalScript += ';out'
+      
+      const result = eval(evalScript);
       return {
         raw: selectionContent, 
         debug: `/*\n${result}\n*/`
