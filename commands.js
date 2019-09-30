@@ -47,7 +47,8 @@ module.exports = (log, modHelper, fs, parse, generate) => {
     getAstFromSelect: (selectionContent) => {
 	    const {arr} = helperFunctions.parseSelectionToArray(selectionContent);
 
-      const ast = {
+      // noinspection UnnecessaryLocalVariableJS
+	    const ast = {
         type: "File",
         program: {
           type: "Program",
@@ -90,7 +91,7 @@ module.exports = (log, modHelper, fs, parse, generate) => {
       const storedAst = {mask:{}, template:{}, ...helperFunctions.getAstsConfigFromFile()};
 
       if (storedAst.mask && storedAst.template) {
-        result = modHelper.mutate(astFromSelection, storedAst.mask, storedAst.template);
+        const result = modHelper.mutate(astFromSelection, storedAst.mask, storedAst.template);
         debug = result.debug;
         ast = result.template;
       } else {
@@ -111,7 +112,7 @@ module.exports = (log, modHelper, fs, parse, generate) => {
     },
 	  code_to_ast: (selectionContent) =>{
       const astFull = helperFunctions.parseAstFromSelectedCode(selectionContent);
-      const astForPrint = astFull.program.body
+      const astForPrint = astFull.program.body;
     	return {
     		code:selectionContent,
 		    ast: JSON.stringify(astForPrint, null, 2)
@@ -139,7 +140,7 @@ module.exports = (log, modHelper, fs, parse, generate) => {
     },
     get_vars:(selectionContent)=>{
       const ast = helperFunctions.parseAstFromSelectedCode(selectionContent);
-      payloadFn = (val, path, key)  =>{
+      const payloadFn = (val, path, key)  =>{
         if (val.type === "ArrowFunctionExpression") {
 
         }
@@ -156,9 +157,9 @@ module.exports = (log, modHelper, fs, parse, generate) => {
           //get .left.name
         }
         // if (val.)
-      }
+      };
 
-      modHelper.recursiveObjWalk(ast, payloadFn, path = [])
+      modHelper.recursiveObjWalk(ast, payloadFn)
     },
   };
 
