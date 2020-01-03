@@ -23,7 +23,7 @@ const ast = getAst(fileContent).program.body;
 
 
   
-  jArr = dataMod.jsonToStringArray(ast,true);
+  const jArr = dataMod.jsonToStringArray(ast,true);
 //   jArr.map(simpleShow);
   const getElByIndex = i => jArr[i]
   const varUsages = {};
@@ -31,19 +31,22 @@ const ast = getAst(fileContent).program.body;
 
   const isVarSimpleWordRe = /\:\:\w+$/
 
-  dataMod.searchInStrArrayRe(jArr,/type::Identifier/,true).map(e => {
-    const routeArr = e.split(':');
+  dataMod.searchInStrArrayRe(jArr, /type::Identifier/, true).map(e => {
+    const routeArr = e.split(":");
     // elAst = dataMod.getObjByPath(ast, routeArr.slice(1,-2))
-    const nameEl = dataMod.searchInStrArrayRe(jArr,new RegExp(routeArr.slice(0,-3).join(':')+':name'),true)
+    const nameEl = dataMod.searchInStrArrayRe(
+      jArr,
+      new RegExp(routeArr.slice(0, -3).join(":") + ":name"),
+      true
+    );
 
     nameEl.map(el => {
-        
-        // console.log(jArr[el])
-        if (isVarSimpleWordRe.test(jArr[el]) && !/key:name::/.test(jArr[el]) ) {
-            varUsages[jArr[el].split('::').slice(-1)] = true;
-        }
+      // console.log(jArr[el])
+      if (isVarSimpleWordRe.test(jArr[el]) && !/key:name::/.test(jArr[el])) {
+        varUsages[jArr[el].split("::").slice(-1)] = true;
+      }
     });
-  })
+  });
 
   dataMod.searchInStrArrayRe(jArr,/type::ArrowFunctionExpression/,true).map(e => {
     const routeArr = e.split(':');
@@ -113,8 +116,8 @@ const ast = getAst(fileContent).program.body;
   console.log('Var create');
   Object.keys(varCreate).map(simpleShow);
 
-  varUsagesSet = new Set(Object.keys(varUsages))
-  varCreateSet = new Set(Object.keys(varCreate))
+  const varUsagesSet = new Set(Object.keys(varUsages))
+  const varCreateSet = new Set(Object.keys(varCreate))
 
 
   console.log();  

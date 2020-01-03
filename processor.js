@@ -38,33 +38,37 @@ module.exports = (parse, generate, vscode) => {
       log.info("New1.2");
       let editor = vscode.window.activeTextEditor;
       if (editor) {
-        let document = editor.document;
-        let selection = editor.selection;
+                    let document = editor.document;
+                    let selection = editor.selection;
 
-        // Get the word within the selection
-        let selectionContent = document.getText(selection);
-        // vscode.window.showInformationMessage(selectionContent);
+                    // Get the word within the selection
+                    let selectionContent = document.getText(selection);
+                    // vscode.window.showInformationMessage(selectionContent);
 
-        let result = commands.execute(selectionContent);
-        // log.info(JSON.stringify(result));
+                    let result = commands.execute(selectionContent);
+                    // log.info(JSON.stringify(result));
 
-        let updatedContent = '';
-        updatedContent+= result.raw;
-	      // noinspection JSMismatchedCollectionQueryUpdate
-	      const commentedParts = [];
-	      for (const part of ['before', 'code', 'ast', 'debug']) {
-	      	if (result[part]) {
-			      updatedContent += '\n';
-			      updatedContent += `//${part}\n`;
-			      updatedContent += commentedParts.includes(part) ? '/*' : '';
-			      updatedContent += `${result[part]}\n`;
-			      updatedContent += commentedParts.includes(part) ? '*/' : '';
-		      }
-	      }
-        editor.edit(editBuilder => {
-          editBuilder.replace(selection, updatedContent);
-        });
-      }
+                    let updatedContent = "";
+                    updatedContent += result.raw;
+                    // noinspection JSMismatchedCollectionQueryUpdate
+                    const commentedParts = [];
+                    for (const part of ["before", "code", "ast", "debug"]) {
+                      if (result[part]) {
+                        updatedContent += "\n";
+                        updatedContent += `//${part}\n`;
+                        updatedContent += commentedParts.includes(part)
+                          ? "/*"
+                          : "";
+                        updatedContent += `${result[part]}\n`;
+                        updatedContent += commentedParts.includes(part)
+                          ? "*/"
+                          : "";
+                      }
+                    }
+                    editor.edit(editBuilder => {
+                      editBuilder.replace(selection, updatedContent);
+                    });
+                  }
     } catch (e) {
       log.info('Thrown in processor: ' +JSON.stringify(e));
     }
