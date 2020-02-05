@@ -1,128 +1,88 @@
-
 const fs = require('fs');
 const fileContent = fs.readFileSync(process.argv[2]).toString();
 const parse = require('@babel/parser').parse;
-const dataMod = require('./data_modifications')({info:console.log});
+const dataMod = require('./data_modifications')({ info: console.log });
 
-const getAst = (content)=>{
-    const ast = parse(content, {
-        allowImportExportEverywhere: true,
-        allowAwaitOutsideFunction: true,
-        allowReturnOutsideFunction: true,
-        allowSuperOutsideMethod: true,
-        allowUndeclaredExports: true,
-        ranges: false
-      });
-      dataMod.recursiveCleanAst(ast);
+const getAst = (content) => {
+	const ast = parse(content, {
+		allowImportExportEverywhere: true,
+		allowAwaitOutsideFunction: true,
+		allowReturnOutsideFunction: true,
+		allowSuperOutsideMethod: true,
+		allowUndeclaredExports: true,
+		ranges: false
+	});
+	dataMod.recursiveCleanAst(ast);
 
-      return ast;
-}
+	return ast;
+};
 const ast = getAst(fileContent).program.body;
 
-  const simpleShow  = a => console.log(a)
+const simpleShow = a => console.log(a);
 
-
-  
   const jArr = dataMod.jsonToStringArray(ast,true);
 //   jArr.map(simpleShow);
-  const getElByIndex = i => jArr[i]
-  const varUsages = {};
-  const varCreate = {};
+const getElByIndex = i => jArr[i];
+const varUsages = {};
+const varCreate = {};
 
   const isVarSimpleWordRe = /\:\:\w+$/
 
-  dataMod.searchInStrArrayRe(jArr, /type::Identifier/, true).map(e => {
-    const routeArr = e.split(":");
+  dataMod.searchInStrArrayRe(jArr,/type::Identifier/,true).map(e => {
+    const routeArr = e.split(':');
     // elAst = dataMod.getObjByPath(ast, routeArr.slice(1,-2))
-    const nameEl = dataMod.searchInStrArrayRe(
-      jArr,
-      new RegExp(routeArr.slice(0, -3).join(":") + ":name"),
-      true
-    );
+    const nameEl = dataMod.searchInStrArrayRe(jArr,new RegExp(routeArr.slice(0,-3).join(':')+':name'),true);
 
     nameEl.map(el => {
-      // console.log(jArr[el])
-      if (isVarSimpleWordRe.test(jArr[el]) && !/key:name::/.test(jArr[el])) {
-        varUsages[jArr[el].split("::").slice(-1)] = true;
-      }
+        // console.log(jArr[el])
+        if (isVarSimpleWordRe.test(jArr[el]) && !/key:name::/.test(jArr[el]) ) {
+            varUsages[jArr[el].split('::').slice(-1)] = true;
+        }
     });
   });
 
-  dataMod.searchInStrArrayRe(jArr,/type::ArrowFunctionExpression/,true).map(e => {
-    const routeArr = e.split(':');
-    // elAst = dataMod.getObjByPath(ast, routeArr.slice(1,-2))
-    const nameEl = dataMod.searchInStrArrayRe(jArr,new RegExp(routeArr.slice(0,-2).join(':')+':params'),true)
+const payloadFinderFn = (re1, cutCount, routeAdd, filterNegativeRe, filterPositiveRe, resultVar) => {
+	dataMod.searchInStrArrayRe(jArr, re1, true).map(e => {
+		const addFn = (el) => {
+			if (
+				isVarSimpleWordRe.test(jArr[el])
+				&& (filterNegativeRe === false || !filterNegativeRe.test(jArr[el]))
+				&& (filterPositiveRe === false || filterPositiveRe.test(jArr[el]))
+			) {
+				const val = jArr[el].split('::').slice(-1)[0];
+				const route = jArr[el].split('::')[0].split(':').slice(1, -cutCount).join(':');
+					resultVar[route+val] = [val,route];
+			}
+		};
 
-    nameEl.map(el => {
-        // console.log(jArr[el])
-        if (/params:\d+:name/.test(jArr[el]) && isVarSimpleWordRe.test(jArr[el])) {
-            varCreate[jArr[el].split('::').slice(-1)] = true;
-        }
-    });
-  })
+		if (cutCount === 0) {
+			addFn(e);
+			return;
+		}
 
-  dataMod.searchInStrArrayRe(jArr,/type::FunctionExpression/,true).map(e => {
-    const routeArr = e.split(':');
-    // elAst = dataMod.getObjByPath(ast, routeArr.slice(1,-2))
-    const nameEl = dataMod.searchInStrArrayRe(jArr,new RegExp(routeArr.slice(0,-2).join(':')+':params'),true)
+		const routeArr = e.split(':');
+		// elAst = dataMod.getObjByPath(ast, routeArr.slice(1,-2))
 
-    nameEl.map(el => {
-        // console.log(jArr[el])
-        if (/params:\d+:name/.test(jArr[el]) && isVarSimpleWordRe.test(jArr[el])) {
-            varCreate[jArr[el].split('::').slice(-1)] = true;
-        }
-        
-    });
-  })
+		const nameEl = dataMod.searchInStrArrayRe(jArr, new RegExp(routeArr.slice(0, -cutCount).join(':') + routeAdd), true);
 
-  dataMod.searchInStrArrayRe(jArr,/type::VariableDeclarator/,true).map(e => {
-    const routeArr = e.split(':');
-    // elAst = dataMod.getObjByPath(ast, routeArr.slice(1,-2))
-    const nameEl = dataMod.searchInStrArrayRe(jArr,new RegExp(routeArr.slice(0,-2).join(':')+':id:name'),true)
+		nameEl.map(el => {
+			// console.log(jArr[el])
+			addFn(el)
+		});
+	})
+};
 
-    nameEl.map(el => {
-        // console.log(jArr[el])
-        if (isVarSimpleWordRe.test(jArr[el])) {
-            varCreate[jArr[el].split('::').slice(-1)] = true;
-        }
-        
-    });
-  })
+const payloadsArr = [
+	[/type::Identifier/, 3, ':name', /key:name::/, false, varUsages],
+	[/type::ArrowFunctionExpression/, 2, ':params', false, /params:\d+:name/, varCreate],
+	[/type::FunctionExpression/, 2, ':params', false, /params:\d+:name/, varCreate],
+	[/type::VariableDeclarator/, 2, ':id:name', false, false, varCreate],
+	[/type::AssignmentExpression/, 2, ':left:name', false, false, varCreate],
+	[/handler:param:name/, 0, '', false, false, varCreate],
+];
 
-  dataMod.searchInStrArrayRe(jArr,/type::AssignmentExpression/,true).map(e => {
-    const routeArr = e.split(':');
-    // elAst = dataMod.getObjByPath(ast, routeArr.slice(1,-2))
-    const nameEl = dataMod.searchInStrArrayRe(jArr,new RegExp(routeArr.slice(0,-2).join(':')+':left:name'),true)
-
-    nameEl.map(el => {
-        // console.log(jArr[el])
-        if (isVarSimpleWordRe.test(jArr[el])) {
-            varCreate[jArr[el].split('::').slice(-1)] = true;
-        }
-    });
-  })
-
-  dataMod.searchInStrArrayRe(jArr,/handler:param:name/,true).map(el => {
-    // console.log(jArr[e]);
-    if (isVarSimpleWordRe.test(jArr[el])) {
-        varCreate[jArr[el].split('::').slice(-1)] = true;
-    }
-  })
-
-  console.log();
-  console.log('Var usage');
-  Object.keys(varUsages).map(simpleShow);
-  console.log();
-  console.log('Var create');
-  Object.keys(varCreate).map(simpleShow);
-
+for (const plFnParams of payloadsArr) {
+	payloadFinderFn(...plFnParams);
+}
   const varUsagesSet = new Set(Object.keys(varUsages))
   const varCreateSet = new Set(Object.keys(varCreate))
-
-
-  console.log();  
-  console.log();
-  console.log('+');
-  console.log([...varUsagesSet].filter(e => !varCreateSet.has(e)));
-  console.log('-');
-  console.log([...varCreateSet].filter(e => !varUsagesSet.has(e)));

@@ -588,3 +588,74 @@ true
 false
 */
 
+
+//code
+if (z!==a && z !== b) {
+  doSomeWork();
+}
+//find for 
+//if (root.type === "LogicalExpression"),
+//if (root.operator === "&&")
+//if (root.left.type === "BinaryExpression")
+//if (root.left.operator === "!==")
+//if (root.right.type === "BinaryExpression")
+//if (root.right.operator === "!==")
+
+//if (JSON.stringify(root.left.left) === JSON.stringify(root.right.left))
+//if (JSON.stringify(root.left.right) !== JSON.stringify(root.right.right))
+//or
+//if (JSON.stringify(root.left.left) !== JSON.stringify(root.right.left))
+//if (JSON.stringify(root.left.right) === JSON.stringify(root.right.right))
+
+//ast
+[
+  {
+    "type": "IfStatement",
+    "test": {
+      "type": "LogicalExpression",
+      "left": {
+        "type": "BinaryExpression",
+        "left": {
+          "type": "Identifier",
+          "name": "z"
+        },
+        "operator": "!==",
+        "right": {
+          "type": "Identifier",
+          "name": "a"
+        }
+      },
+      "operator": "&&",
+      "right": {
+        "type": "BinaryExpression",
+        "left": {
+          "type": "Identifier",
+          "name": "z"
+        },
+        "operator": "!==",
+        "right": {
+          "type": "Identifier",
+          "name": "b"
+        }
+      }
+    },
+    "consequent": {
+      "type": "BlockStatement",
+      "body": [
+        {
+          "type": "ExpressionStatement",
+          "expression": {
+            "type": "CallExpression",
+            "callee": {
+              "type": "Identifier",
+              "name": "doSomeWork"
+            },
+            "arguments": []
+          }
+        }
+      ],
+      "directives": []
+    },
+    "alternate": null
+  }
+]

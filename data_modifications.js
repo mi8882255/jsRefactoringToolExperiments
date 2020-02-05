@@ -108,6 +108,11 @@ module.exports = log => {
       }
 
       return results;
+          },
+          reverseObj(obj) {
+            leafs=[];
+            obj4test = {a:{t:2, b:{t:1, c:""}}};
+
     }
   };
 

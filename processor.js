@@ -1,6 +1,7 @@
 delete require.cache[require.resolve('./commands')];
 delete require.cache[require.resolve('./data_modifications')];
 const fs = require("fs");
+const util = require('util');
 
 /**
  * @typedef {Object} document
@@ -38,14 +39,26 @@ module.exports = (parse, generate, vscode) => {
       log.info("New1.2");
       let editor = vscode.window.activeTextEditor;
       if (editor) {
-                    let document = editor.document;
-                    let selection = editor.selection;
+        let document = editor.document;
+        let selection = editor.selection;
 
-                    // Get the word within the selection
-                    let selectionContent = document.getText(selection);
-                    // vscode.window.showInformationMessage(selectionContent);
+        // Get the word within the selection
+        let selectionContent = document.getText(selection);
+        // vscode.window.showInformationMessage(selectionContent);
 
-                    let result = commands.execute(selectionContent);
+        if (selectionContent.substr(0,7) === '//debug') {
+          editor.edit(editBuilder => {
+            debugData = '//debug\nc \n' + util.inspect(editor.document);
+            debugData += '\n';
+            debugData += '\n//' + editor.document.fileName;
+            debugData += '\ndebug2 = ' + util.inspect(editor.selection._start);
+            editBuilder.replace(selection, debugData);
+          });
+          log.info('debug');
+          return;
+        }
+
+        let result = commands.execute(selectionContent, editor);
                     // log.info(JSON.stringify(result));
 
                     let updatedContent = "";

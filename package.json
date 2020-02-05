@@ -18,6 +18,7 @@
   },
   "homepage": "https://github.com/mi8882255/jsRefactoringTool#readme",
   "dependencies": {
-    "@babel/parser": "^7.6.2"
+    "@babel/generator": "^7.6.4",
+    "@babel/parser": "^7.6.4"
   }
 }

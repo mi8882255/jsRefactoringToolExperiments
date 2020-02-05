@@ -30,12 +30,9 @@ module.exports = (log, modHelper, fs, parse, generate) => {
      * @param selectionContent
      * @return object
      */
-    parseAstFromSelectedCode: selectionContent => {
-      const { arr, command } = helperFunctions.parseSelectionToArray(
-        selectionContent
-      );
-      selectionContent =
-        command === "code_to_ast" ? arr.join("\n") : arr.slice(1).join("\n");
+    parseAstFromSelectedCode: (selectionContent, clean = true) => {
+		  const {arr, command} = helperFunctions.parseSelectionToArray(selectionContent);
+		  selectionContent = (command ==='code_to_ast') ? arr.join("\n") : arr.slice(1).join("\n");
 
       let ast = parse(selectionContent, {
         allowImportExportEverywhere: true,
@@ -46,7 +43,7 @@ module.exports = (log, modHelper, fs, parse, generate) => {
         ranges: false
       });
 
-      modHelper.recursiveCleanAst(ast);
+      if (clean) modHelper.recursiveCleanAst(ast);
 
       return ast;
     },
@@ -187,7 +184,7 @@ module.exports = (log, modHelper, fs, parse, generate) => {
 
   // noinspection UnnecessaryLocalVariableJS
   const impl = {
-    execute: selectionContent => {
+    execute: (selectionContent, editor) => {
       try {
         const { command } = helperFunctions.parseSelectionToArray(
           selectionContent
@@ -213,7 +210,8 @@ module.exports = (log, modHelper, fs, parse, generate) => {
           before: ""
         };
       }
-    }
+    },
+    helperFunctions
   };
 
   return impl;
