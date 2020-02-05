@@ -15,5 +15,6 @@ module.exports = {
     "rules": {
         "no-console":["info"],
         "semi-style": ["error", "last"],
+        "no-unused-vars": "off"
     }
 };

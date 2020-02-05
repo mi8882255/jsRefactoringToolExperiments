@@ -26,7 +26,7 @@ const getElByIndex = i => jArr[i];
 const varUsages = {};
 const varCreate = {};
 
-  const isVarSimpleWordRe = /\:\:\w+$/
+  const isVarSimpleWordRe = /::\w+$/
 
   dataMod.searchInStrArrayRe(jArr,/type::Identifier/,true).map(e => {
     const routeArr = e.split(':');
