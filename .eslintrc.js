@@ -13,7 +13,7 @@ module.exports = {
         "ecmaVersion": 2018
     },
     "rules": {
-        "no-console":["info"],
+        "no-console":"off",
         "semi-style": ["error", "last"],
         "no-unused-vars": "off"
     }

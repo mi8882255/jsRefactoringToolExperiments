@@ -1,7 +1,7 @@
 const fs = require('fs');
 const fileContent = fs.readFileSync(process.argv[2]).toString();
 const parse = require('@babel/parser').parse;
-const dataMod = require('./data_modifications')({ info: console.log });
+const dataMod = require('../data_modifications')({ info: console.log });
 
 const getAst = (content) => {
 	const ast = parse(content, {
