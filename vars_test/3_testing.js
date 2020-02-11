@@ -29,56 +29,32 @@ const getElByIndex = i => jArr[i];
 const varUsages = {};
 const varCreate = {};
 
-dataMod.searchInStrArrayRe(jArr, /type::Identifier/, true).map(e => {
-  const routeArr = e.split(":");
-  // elAst = dataMod.getObjByPath(ast, routeArr.slice(1,-2))
-  const nameEl = dataMod.searchInStrArrayRe(
-    jArr,
-    new RegExp(routeArr.slice(0, -3).join(":") + ":name"),
-    true
-  );
+const addUsages = key => (varUsages[key] = true);
+const addCreate = key => (varCreate[key] = true);
 
-  nameEl.map(el => {
-    // console.log(jArr[el])
-    varUsages[jArr[el].split("::").slice(-2)] = true;
-  });
-});
-
-dataMod
-  .searchInStrArrayRe(jArr, /type::ArrowFunctionExpression/, true)
-  .map(e => {
+const searchAstWrapper = (re1, splitTo, re2, splitTo2, flag,  addFn) => {
+  dataMod.searchInStrArrayRe(jArr, re1, flag).map(e => {
     const routeArr = e.split(":");
-    // elAst = dataMod.getObjByPath(ast, routeArr.slice(1,-2))
     const nameEl = dataMod.searchInStrArrayRe(
       jArr,
-      new RegExp(routeArr.slice(0, -2).join(":") + ":params"),
-      true
+      new RegExp(routeArr.slice(0, splitTo).join(":") + re2),
+      flag
     );
 
     nameEl.map(el => {
-      console.log(jArr[el]);
-      if (/params:\d+:name/.test(el)) {
-        varCreate[jArr[el].split("::").slice(-1)] = true;
-      }
+      // console.log(jArr[el])
+      addFn(jArr[el].split("::").slice(splitTo2));
     });
   });
+};
 
-dataMod.searchInStrArrayRe(jArr, /type::FunctionExpression/, true).map(e => {
-  const routeArr = e.split(":");
-  // elAst = dataMod.getObjByPath(ast, routeArr.slice(1,-2))
-  const nameEl = dataMod.searchInStrArrayRe(
-    jArr,
-    new RegExp(routeArr.slice(0, -2).join(":") + ":params"),
-    true
-  );
+searchAstWrapper(/type::Identifier/, -3, ":name", -2, true, addUsages);
 
-  nameEl.map(el => {
-    console.log(jArr[el]);
-    if (/params:\d+:name/.test(el)) {
-      varCreate[jArr[el].split("::").slice(-1)] = true;
-    }
-  });
-});
+searchAstWrapper(/type::ArrowFunctionExpression/,-2,':params', -1, true, addCreate)
+
+
+searchAstWrapper(/type::FunctionExpression/,-2,':params', -2, true, addCreate)
+//searchAstWrapper(/type::FunctionExpression/,-2,':params', -2, true, addCreate)
 
 dataMod.searchInStrArrayRe(jArr, /type::VariableDeclarator/, true).map(e => {
   const routeArr = e.split(":");
@@ -119,4 +95,3 @@ Object.keys(varUsages).map(simpleShow);
 console.log();
 console.log("Var create");
 Object.keys(varCreate).map(simpleShow);
-
