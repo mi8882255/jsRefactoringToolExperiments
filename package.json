@@ -1,7 +1,6 @@
 {
   "name": "cmt_worker_path",
   "version": "1.0.0",
-  "description": "",
   "main": "1_testing.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
@@ -18,8 +17,12 @@
   },
   "homepage": "https://github.com/mi8882255/jsRefactoringTool#readme",
   "dependencies": {
-    "@babel/generator": "^7.6.4",
-    "@babel/parser": "^7.6.4",
+    "@babel/generator": "^7.13.9",
+    "@babel/parser": "^7.13.15",
+    "body-parser": "^1.19.0",
+    "express": "^4.17.1",
     "log4js": "^6.1.0"
-  }
+  },
+  "devDependencies": {},
+  "description": ""
 }

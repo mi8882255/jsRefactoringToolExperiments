@@ -4,7 +4,7 @@
 module.exports = (log, modHelper, fs, parse, generate) => {
   const storedAstFileName = __dirname + "/stored_ast.txt";
   const helperFunctions = {
-    parseSelectionToArray: selectionContent => {
+    parseSelectionToArray: (selectionContent) => {
       const codeAsArray = (selectionContent || "").split("\n");
       let commandLine = codeAsArray[0].trim();
       let command =
@@ -14,25 +14,26 @@ module.exports = (log, modHelper, fs, parse, generate) => {
 
       return {
         arr: codeAsArray,
-        command: command
+        command: command,
       };
     },
     getAstsConfigFromFile: () => {
-                                   // log.info(storedAstFileName);
-                                   return fs.existsSync(storedAstFileName)
-                                     ? JSON.parse(
-                                         fs.readFileSync(storedAstFileName)
-                                       )
-                                     : {};
-                                 },
+      // log.info(storedAstFileName);
+      return fs.existsSync(storedAstFileName)
+        ? JSON.parse(fs.readFileSync(storedAstFileName))
+        : {};
+    },
     /**
      *
      * @param selectionContent
      * @return object
      */
     parseAstFromSelectedCode: (selectionContent, clean = true) => {
-		  const {arr, command} = helperFunctions.parseSelectionToArray(selectionContent);
-		  selectionContent = (command ==='code_to_ast') ? arr.join("\n") : arr.slice(1).join("\n");
+      const { arr, command } = helperFunctions.parseSelectionToArray(
+        selectionContent
+      );
+      selectionContent =
+        command === "code_to_ast" ? arr.join("\n") : arr.slice(1).join("\n");
 
       let ast = parse(selectionContent, {
         allowImportExportEverywhere: true,
@@ -40,14 +41,14 @@ module.exports = (log, modHelper, fs, parse, generate) => {
         allowReturnOutsideFunction: true,
         allowSuperOutsideMethod: true,
         allowUndeclaredExports: true,
-        ranges: false
+        ranges: false,
       });
 
       if (clean) modHelper.recursiveCleanAst(ast);
 
       return ast;
     },
-    getAstFromSelect: selectionContent => {
+    getAstFromSelect: (selectionContent) => {
       const { arr } = helperFunctions.parseSelectionToArray(selectionContent);
 
       // noinspection UnnecessaryLocalVariableJS
@@ -56,39 +57,39 @@ module.exports = (log, modHelper, fs, parse, generate) => {
         program: {
           type: "Program",
           body: JSON.parse(arr.slice(1).join("\n")),
-          directives: []
+          directives: [],
         },
-        comments: []
+        comments: [],
       };
 
       return ast;
     },
-    generateCodeFromAst: ast => {
+    generateCodeFromAst: (ast) => {
       return generate(ast).code.replace(/\n\n/, "\n");
-    }
+    },
   };
 
   const simpeFunctions = {
-    ast: selectionContent => {
+    ast: (selectionContent) => {
       const ast = helperFunctions.getAstFromSelect(selectionContent);
       const code = helperFunctions.generateCodeFromAst(ast);
       return { code, ast: JSON.stringify(ast, null, 2) };
     },
-    set_mask: selectionContent => {
+    set_mask: (selectionContent) => {
       const ast = helperFunctions.parseAstFromSelectedCode(selectionContent);
       const storedAst = helperFunctions.getAstsConfigFromFile();
       storedAst.mask = ast;
       fs.writeFileSync(storedAstFileName, JSON.stringify(storedAst));
       return { raw: selectionContent };
     },
-    set_template: selectionContent => {
+    set_template: (selectionContent) => {
       const ast = helperFunctions.parseAstFromSelectedCode(selectionContent);
       const storedAst = helperFunctions.getAstsConfigFromFile();
       storedAst.template = ast;
       fs.writeFileSync(storedAstFileName, JSON.stringify(storedAst));
       return { raw: selectionContent };
     },
-    mutate: selectionContent => {
+    mutate: (selectionContent) => {
       let debug = "",
         ast = "";
       let astFromSelection = helperFunctions.parseAstFromSelectedCode(
@@ -97,7 +98,7 @@ module.exports = (log, modHelper, fs, parse, generate) => {
       const storedAst = {
         mask: {},
         template: {},
-        ...helperFunctions.getAstsConfigFromFile()
+        ...helperFunctions.getAstsConfigFromFile(),
       };
 
       if (storedAst.mask && storedAst.template) {
@@ -116,37 +117,37 @@ module.exports = (log, modHelper, fs, parse, generate) => {
 
       return { code };
     },
-    diff_mask: selectionContent => {
+    diff_mask: (selectionContent) => {
       let ast = helperFunctions.parseAstFromSelectedCode(selectionContent);
       const storedAst = {
         mask: {},
         template: {},
-        ...helperFunctions.getAstsConfigFromFile()
+        ...helperFunctions.getAstsConfigFromFile(),
       };
       const debug = JSON.stringify(modHelper.diff(storedAst.mask, ast));
       ast = { program: { body: {} } };
 
       return { debug };
     },
-    code_to_ast: selectionContent => {
+    code_to_ast: (selectionContent) => {
       const astFull = helperFunctions.parseAstFromSelectedCode(
         selectionContent
       );
       const astForPrint = astFull.program.body;
       return {
         code: selectionContent,
-        ast: JSON.stringify(astForPrint, null, 2)
+        ast: JSON.stringify(astForPrint, null, 2),
       };
     },
-    json_format: selectionContent => {
+    json_format: (selectionContent) => {
       const { arr } = helperFunctions.parseSelectionToArray(selectionContent);
       selectionContent = arr.slice(1).join("\n");
 
       return {
-        code: JSON.stringify(JSON.parse(selectionContent), null, 2)
+        code: JSON.stringify(JSON.parse(selectionContent), null, 2),
       };
     },
-    run: selectionContent => {
+    run: (selectionContent) => {
       let evalScript = "";
       // evalScript += 'out = "";console = {log: (txt) => out+=txt}; res =' ;
       evalScript += selectionContent;
@@ -155,10 +156,10 @@ module.exports = (log, modHelper, fs, parse, generate) => {
       const result = eval(evalScript);
       return {
         raw: selectionContent,
-        debug: `/*\n${result}\n*/`
+        debug: `/*\n${result}\n*/`,
       };
     },
-    get_vars: selectionContent => {
+    get_vars: (selectionContent) => {
       const ast = helperFunctions.parseAstFromSelectedCode(selectionContent);
       const payloadFn = (val, path, key) => {
         // if (val.type === "ArrowFunctionExpression") {
@@ -166,11 +167,9 @@ module.exports = (log, modHelper, fs, parse, generate) => {
         // if (val.type === "FunctionExpression") {
         //   //get .params[].name
         // }
-
         // if (val.type === "VariableDeclarator") {
         //   //get .id.name
         // }
-
         // //unsafe vars
         // if (val.type === "AssignmentExpression") {
         //   //get .left.name
@@ -179,7 +178,7 @@ module.exports = (log, modHelper, fs, parse, generate) => {
       };
 
       modHelper.recursiveObjWalk(ast, payloadFn);
-    }
+    },
   };
 
   // noinspection UnnecessaryLocalVariableJS
@@ -207,11 +206,11 @@ module.exports = (log, modHelper, fs, parse, generate) => {
           code: selectionContent,
           debug: `Err: ${JSON.stringify(e)}`,
           ast: "",
-          before: ""
+          before: "",
         };
       }
     },
-    helperFunctions
+    helperFunctions,
   };
 
   return impl;
