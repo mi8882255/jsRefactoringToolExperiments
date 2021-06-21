@@ -6,8 +6,8 @@ const generate = require("@babel/generator").default;
 const bodyParser = require("body-parser");
 
 const app = express();
-app.use(bodyParser.text());
-const port = 3003;
+app.use(bodyParser.json());
+const port = 5003;
 
 const log = {
   info: (text) => {
@@ -26,9 +26,15 @@ app.post("/", (req, res) => {
   const modHelper = require("./data_modifications")(log);
   const commands = require("./commands")(log, modHelper, fs, parse, generate);
 
-  let result = commands.execute(req.body);
+  let result = commands.execute(req.body.code);
 
-  res.send(result);
+  console.log(JSON.stringify(result));
+
+  let rawResult = Object.keys(result).reduce((acc, k) => {
+    acc += `//${k}\n${result[k]}\n`;
+    return acc;
+  }, "");
+  res.send({ text: rawResult });
 });
 
 app.listen(port, () => {

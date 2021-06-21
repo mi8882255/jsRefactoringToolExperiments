@@ -93,3 +93,6 @@ module.exports = (parse, generate, vscode) => {
     process,
   };
 };
+
+//run
+1 + 1;
