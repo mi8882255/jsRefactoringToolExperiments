@@ -7,7 +7,7 @@ const bodyParser = require("body-parser");
 
 const app = express();
 app.use(bodyParser.json());
-const port = 5003;
+const port = 3003;
 
 const log = {
   info: (text) => {
