@@ -14,6 +14,8 @@ function parseArgs(argv) {
     enableProjects: true,
     diff: undefined,
     json: null,
+    extraBuiltins: [],
+    skipBuiltinFilter: false,
   };
 
   const rest = [];
@@ -24,6 +26,8 @@ function parseArgs(argv) {
     else if (a === "--port") args.port = Number(argv[++i]);
     else if (a === "--no-external") args.includeExternal = false;
     else if (a === "--no-projects") args.enableProjects = false;
+    else if (a === "--extra-builtins") args.extraBuiltins = argv[++i].split(",").map((s) => s.trim()).filter(Boolean);
+    else if (a === "--show-builtins") args.skipBuiltinFilter = true;
     else if (a === "--diff") {
       const next = argv[i + 1];
       if (next !== undefined && !next.startsWith("--")) {
@@ -55,6 +59,8 @@ Usage: node module-graph/cli.js [target-dir] [options]
                            --diff main       changes vs. "main", including uncommitted
                            --diff "main HEAD" changes strictly between two refs
   --no-projects          Don't auto-detect sibling package.json projects / cross-project links
+  --extra-builtins <a,b> Also exclude these module names as "standard library", on top of Node's own
+  --show-builtins        Don't exclude builtins at all; show them as regular external nodes
 `);
 }
 
@@ -72,14 +78,22 @@ async function main() {
     return;
   }
 
+  const graphOpts = {
+    includeExternal: args.includeExternal,
+    enableProjects: args.enableProjects,
+    diff: args.diff,
+    extraBuiltins: args.extraBuiltins,
+    skipBuiltinFilter: args.skipBuiltinFilter,
+  };
+
   if (args.serve) {
     const { startServer } = require("./src/server");
-    startServer({ targetDir, port: args.port, includeExternal: args.includeExternal, enableProjects: args.enableProjects, diff: args.diff });
+    startServer({ targetDir, port: args.port, ...graphOpts });
     return;
   }
 
   console.log(`Scanning ${targetDir} ...`);
-  const graph = buildGraph(targetDir, { includeExternal: args.includeExternal, enableProjects: args.enableProjects, diff: args.diff });
+  const graph = buildGraph(targetDir, graphOpts);
   console.log(
     `Found ${graph.stats.fileCount} files, ${graph.stats.edgeCount} edges, ` +
       `${graph.stats.externalCount} external deps, ${graph.stats.cycleCount} cycles` +

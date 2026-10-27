@@ -11,9 +11,9 @@ function isRelative(source) {
   return source.startsWith("./") || source.startsWith("../") || source === "." || source === "..";
 }
 
-function isBuiltin(source) {
+function isBuiltin(source, extraBuiltins) {
   const name = source.startsWith("node:") ? source.slice(5) : source;
-  return BUILTIN_SET.has(name);
+  return BUILTIN_SET.has(name) || (extraBuiltins && extraBuiltins.has(name));
 }
 
 function fileExists(p) {
@@ -47,18 +47,24 @@ function resolveAsFileOrDir(candidate) {
  * Resolves an import/require specifier found inside `fromFile`.
  * Returns one of:
  *   { kind: "relative",     resolved: absPath|null, candidate: absPath, source }
- *   { kind: "builtin",      source }                                        -- Node core module, e.g. "fs"
+ *   { kind: "builtin",      source }                                        -- Node core module (or one listed in extraBuiltins)
  *   { kind: "cross-project", resolved: absPath|null, project, source }      -- matches a sibling project's package name
  *   { kind: "external",     source }                                       -- a regular third-party package
+ *
+ * `extraBuiltins` (Set<string>) lets callers extend what counts as a
+ * "standard library" to exclude from the graph, beyond Node's own
+ * builtinModules - e.g. a monorepo's always-available polyfill shim.
+ * Pass `skipBuiltinFilter: true` to disable the exclusion entirely and
+ * let builtins fall through to "external" instead.
  */
-function resolveModule(fromFile, source, { projects = [] } = {}) {
+function resolveModule(fromFile, source, { projects = [], extraBuiltins, skipBuiltinFilter = false } = {}) {
   if (isRelative(source)) {
     const baseDir = path.dirname(fromFile);
     const candidate = path.resolve(baseDir, source);
     return { kind: "relative", resolved: resolveAsFileOrDir(candidate), candidate, source };
   }
 
-  if (isBuiltin(source)) {
+  if (!skipBuiltinFilter && isBuiltin(source, extraBuiltins)) {
     return { kind: "builtin", source };
   }
 

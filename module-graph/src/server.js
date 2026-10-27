@@ -3,7 +3,7 @@ const path = require("path");
 const { buildGraph } = require("./buildGraph");
 const { renderServerHtml } = require("./renderHtml");
 
-function startServer({ targetDir, port, includeExternal, enableProjects, diff }) {
+function startServer({ targetDir, port, includeExternal, enableProjects, diff, extraBuiltins, skipBuiltinFilter }) {
   const app = express();
 
   app.get("/", (req, res) => {
@@ -12,7 +12,7 @@ function startServer({ targetDir, port, includeExternal, enableProjects, diff })
 
   app.get("/api/graph", (req, res) => {
     try {
-      const graph = buildGraph(targetDir, { includeExternal, enableProjects, diff });
+      const graph = buildGraph(targetDir, { includeExternal, enableProjects, diff, extraBuiltins, skipBuiltinFilter });
       res.json(graph);
     } catch (e) {
       res.status(500).json({ error: e.message });

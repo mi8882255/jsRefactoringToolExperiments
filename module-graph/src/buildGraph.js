@@ -28,8 +28,13 @@ const { getChangedFiles } = require("./gitDiff");
  *   diff             - a git diff spec (see gitDiff.js) to mark changed files
  *                      and everything that transitively imports them; omit
  *                      to skip diff analysis entirely
+ *   extraBuiltins    - array of extra module names to treat as "standard
+ *                      library" and exclude from the graph, on top of
+ *                      Node's own builtinModules (default: none)
+ *   skipBuiltinFilter - don't exclude builtins at all; show them as
+ *                      regular external nodes instead (default: false)
  */
-function buildGraph(rootDir, { includeExternal = true, extensions, ignoreDirs, enableProjects = true, diff } = {}) {
+function buildGraph(rootDir, { includeExternal = true, extensions, ignoreDirs, enableProjects = true, diff, extraBuiltins, skipBuiltinFilter = false } = {}) {
   const absRoot = path.resolve(rootDir);
   const effectiveIgnoreDirs = ignoreDirs || DEFAULT_IGNORE_DIRS;
   const files = scanDirectory(absRoot, { extensions, ignoreDirs: effectiveIgnoreDirs });
@@ -39,6 +44,7 @@ function buildGraph(rootDir, { includeExternal = true, extensions, ignoreDirs, e
   const edges = [];
   const parseErrors = [];
   let builtinSkippedCount = 0;
+  const extraBuiltinsSet = extraBuiltins && extraBuiltins.length ? new Set(extraBuiltins) : undefined;
 
   const toId = (absPath) => path.relative(absRoot, absPath).split(path.sep).join("/");
   const projectIdFor = (absPath) => {
@@ -69,7 +75,7 @@ function buildGraph(rootDir, { includeExternal = true, extensions, ignoreDirs, e
 
     const refs = extractImports(ast);
     for (const ref of refs) {
-      const res = resolveModule(absFile, ref.source, { projects });
+      const res = resolveModule(absFile, ref.source, { projects, extraBuiltins: extraBuiltinsSet, skipBuiltinFilter });
 
       if (res.kind === "builtin") {
         builtinSkippedCount++;
