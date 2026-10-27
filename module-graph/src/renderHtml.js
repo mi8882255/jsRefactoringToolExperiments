@@ -1,0 +1,76 @@
+const { clientAppSource } = require("./clientApp");
+
+const VIS_NETWORK_CDN = "https://cdnjs.cloudflare.com/ajax/libs/vis-network/9.1.9/standalone/umd/vis-network.min.js";
+
+function escapeHtml(str) {
+  return String(str).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+function page({ title, bodyExtra, dataScript }) {
+  const safeTitle = escapeHtml(title);
+  return `<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Module graph: ${safeTitle}</title>
+<script src="${VIS_NETWORK_CDN}"></script>
+<style>
+  html, body { margin: 0; height: 100%; font-family: -apple-system, Segoe UI, Roboto, sans-serif; color: #1b1f24; }
+  #app { display: flex; height: 100vh; }
+  #network { flex: 1 1 auto; background: #fafbfc; }
+  #sidebar { width: 280px; flex: 0 0 280px; border-left: 1px solid #e1e4e8; padding: 12px; overflow-y: auto; box-sizing: border-box; }
+  #sidebar h1 { font-size: 15px; margin: 0 0 10px; }
+  #sidebar input[type="text"] { width: 100%; padding: 6px 8px; box-sizing: border-box; border: 1px solid #d0d5dd; border-radius: 6px; margin-bottom: 10px; }
+  #stats { font-size: 13px; line-height: 1.6; border-bottom: 1px solid #e1e4e8; padding-bottom: 10px; margin-bottom: 10px; }
+  #legend { font-size: 12px; margin-bottom: 10px; }
+  #legend span { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
+  #detail { border-top: 1px solid #e1e4e8; padding-top: 10px; margin-top: 10px; }
+  #rescan { margin-bottom: 10px; padding: 6px 10px; border-radius: 6px; border: 1px solid #d0d5dd; background: #fff; cursor: pointer; }
+  label.toggle { font-size: 12px; display: block; margin-bottom: 10px; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="network"></div>
+  <div id="sidebar">
+    <h1>${safeTitle}</h1>
+    ${bodyExtra || ""}
+    <input id="search" type="text" placeholder="Filter by path..." />
+    <label class="toggle"><input id="toggle-external" type="checkbox" checked /> Show external packages</label>
+    <div id="legend">
+      <div><span style="background:#22b36b"></span>entry module (no internal importers)</div>
+      <div><span style="background:#4f8ef7"></span>internal module</div>
+      <div><span style="background:#a0a4ad"></span>external package</div>
+      <div><span style="background:#e5484d"></span>unresolved import</div>
+      <div><span style="background:#f5a524"></span>parse error</div>
+    </div>
+    <div id="stats"></div>
+    <div id="detail"><div style="color:#888;font-size:12px">Click a node to see its connections.</div></div>
+  </div>
+</div>
+${dataScript}
+<script>${clientAppSource()}</script>
+</body>
+</html>`;
+}
+
+function renderStaticHtml(graph, { title = "project" } = {}) {
+  // Escape "</" so a path or error message containing it (e.g. "</script>")
+  // can't prematurely close the embedding <script> tag.
+  const safeJson = JSON.stringify(graph).replace(/<\//g, "<\\/");
+  return page({
+    title,
+    dataScript: `<script>window.__GRAPH_DATA__ = ${safeJson};</script>`,
+  });
+}
+
+function renderServerHtml({ title = "project" } = {}) {
+  return page({
+    title,
+    bodyExtra: `<button id="rescan">Rescan</button>`,
+    dataScript: "",
+  });
+}
+
+module.exports = { renderStaticHtml, renderServerHtml };
