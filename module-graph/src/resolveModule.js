@@ -1,11 +1,19 @@
 const fs = require("fs");
 const path = require("path");
+const { builtinModules } = require("module");
+const { matchProjectBySpecifier } = require("./projects");
 
 const RESOLVE_EXTENSIONS = [".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".json"];
 const INDEX_BASENAMES = RESOLVE_EXTENSIONS.map((ext) => `index${ext}`);
+const BUILTIN_SET = new Set(builtinModules);
 
 function isRelative(source) {
   return source.startsWith("./") || source.startsWith("../") || source === "." || source === "..";
+}
+
+function isBuiltin(source) {
+  const name = source.startsWith("node:") ? source.slice(5) : source;
+  return BUILTIN_SET.has(name);
 }
 
 function fileExists(p) {
@@ -36,25 +44,31 @@ function resolveAsFileOrDir(candidate) {
 }
 
 /**
- * Resolves an import/require specifier found inside `fromFile` to an
- * absolute path on disk. Returns:
- *   { resolved: absolutePath, external: false }  for files inside the project
- *   { resolved: null, external: true, source }    for bare package imports
- *   { resolved: null, external: false, source }   for relative imports that
- *                                                  could not be found on disk
+ * Resolves an import/require specifier found inside `fromFile`.
+ * Returns one of:
+ *   { kind: "relative",     resolved: absPath|null, candidate: absPath, source }
+ *   { kind: "builtin",      source }                                        -- Node core module, e.g. "fs"
+ *   { kind: "cross-project", resolved: absPath|null, project, source }      -- matches a sibling project's package name
+ *   { kind: "external",     source }                                       -- a regular third-party package
  */
-function resolveModule(fromFile, source) {
-  if (!isRelative(source)) {
-    // Also treat TS path-alias-looking absolute specifiers ("@/x") as
-    // external, since resolving tsconfig `paths` is out of scope here.
-    return { resolved: null, external: true, source };
+function resolveModule(fromFile, source, { projects = [] } = {}) {
+  if (isRelative(source)) {
+    const baseDir = path.dirname(fromFile);
+    const candidate = path.resolve(baseDir, source);
+    return { kind: "relative", resolved: resolveAsFileOrDir(candidate), candidate, source };
   }
 
-  const baseDir = path.dirname(fromFile);
-  const candidate = path.resolve(baseDir, source);
-  const resolved = resolveAsFileOrDir(candidate);
+  if (isBuiltin(source)) {
+    return { kind: "builtin", source };
+  }
 
-  return { resolved, external: false, source, candidate };
+  const match = matchProjectBySpecifier(source, projects);
+  if (match) {
+    const candidate = match.subpath ? path.join(match.project.dir, match.subpath) : path.join(match.project.dir, match.project.main);
+    return { kind: "cross-project", resolved: resolveAsFileOrDir(candidate), project: match.project, source };
+  }
+
+  return { kind: "external", source };
 }
 
-module.exports = { resolveModule, RESOLVE_EXTENSIONS, isRelative };
+module.exports = { resolveModule, resolveAsFileOrDir, isRelative, isBuiltin, RESOLVE_EXTENSIONS };

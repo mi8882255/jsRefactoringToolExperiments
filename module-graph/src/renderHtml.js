@@ -28,6 +28,11 @@ function page({ title, bodyExtra, dataScript }) {
   #detail { border-top: 1px solid #e1e4e8; padding-top: 10px; margin-top: 10px; }
   #rescan { margin-bottom: 10px; padding: 6px 10px; border-radius: 6px; border: 1px solid #d0d5dd; background: #fff; cursor: pointer; }
   label.toggle { font-size: 12px; display: block; margin-bottom: 10px; }
+  #mode-switch { margin-bottom: 10px; }
+  #mode-switch button { font-size: 12px; padding: 5px 10px; border: 1px solid #d0d5dd; background: #fff; cursor: pointer; }
+  #mode-switch button:first-child { border-radius: 6px 0 0 6px; }
+  #mode-switch button:last-child { border-radius: 0 6px 6px 0; border-left: none; }
+  #mode-switch button.active { background: #4f8ef7; color: #fff; border-color: #4f8ef7; }
 </style>
 </head>
 <body>
@@ -36,14 +41,25 @@ function page({ title, bodyExtra, dataScript }) {
   <div id="sidebar">
     <h1>${safeTitle}</h1>
     ${bodyExtra || ""}
-    <input id="search" type="text" placeholder="Filter by path..." />
-    <label class="toggle"><input id="toggle-external" type="checkbox" checked /> Show external packages</label>
+    <div id="mode-switch" style="display:none">
+      <button id="mode-file" class="active">File graph</button><button id="mode-project">Project graph</button>
+    </div>
+    <div id="file-controls">
+      <input id="search" type="text" placeholder="Filter by path..." />
+      <label class="toggle"><input id="toggle-external" type="checkbox" checked /> Show external packages</label>
+      <label class="toggle" id="only-affected-wrap" style="display:none"><input id="only-affected" type="checkbox" /> Show only changed/impacted</label>
+    </div>
     <div id="legend">
       <div><span style="background:#22b36b"></span>entry module (no internal importers)</div>
       <div><span style="background:#4f8ef7"></span>internal module</div>
       <div><span style="background:#a0a4ad"></span>external package</div>
       <div><span style="background:#e5484d"></span>unresolved import</div>
       <div><span style="background:#f5a524"></span>parse error</div>
+      <div id="legend-crossproject" style="display:none"><span style="background:#c77dff"></span>cross-project interface</div>
+      <div id="legend-diff" style="display:none">
+        <div><span style="background:#fff;border:3px solid #d7263d"></span>changed (in diff)</div>
+        <div><span style="background:#fff;border:3px solid #f2a900"></span>impacted (imports a changed file)</div>
+      </div>
     </div>
     <div id="stats"></div>
     <div id="detail"><div style="color:#888;font-size:12px">Click a node to see its connections.</div></div>

@@ -5,7 +5,16 @@ const { buildGraph } = require("./src/buildGraph");
 const { renderStaticHtml } = require("./src/renderHtml");
 
 function parseArgs(argv) {
-  const args = { target: ".", out: "module-graph-report.html", serve: false, port: 4321, includeExternal: true, json: null };
+  const args = {
+    target: ".",
+    out: "module-graph-report.html",
+    serve: false,
+    port: 4321,
+    includeExternal: true,
+    enableProjects: true,
+    diff: undefined,
+    json: null,
+  };
 
   const rest = [];
   for (let i = 0; i < argv.length; i++) {
@@ -14,7 +23,16 @@ function parseArgs(argv) {
     else if (a === "--serve") args.serve = true;
     else if (a === "--port") args.port = Number(argv[++i]);
     else if (a === "--no-external") args.includeExternal = false;
-    else if (a === "--json") args.json = argv[++i];
+    else if (a === "--no-projects") args.enableProjects = false;
+    else if (a === "--diff") {
+      const next = argv[i + 1];
+      if (next !== undefined && !next.startsWith("--")) {
+        args.diff = next;
+        i++;
+      } else {
+        args.diff = "";
+      }
+    } else if (a === "--json") args.json = argv[++i];
     else if (a === "--help" || a === "-h") args.help = true;
     else rest.push(a);
   }
@@ -32,6 +50,11 @@ Usage: node module-graph/cli.js [target-dir] [options]
   --serve                Start a local server with a live "Rescan" button instead of writing a file
   --port <n>             Port for --serve (default: 4321)
   --no-external          Hide external (node_modules / bare specifier) dependencies
+  --diff [spec]          Mark files changed per git diff + everything that imports them
+                           --diff            uncommitted changes (staged + unstaged + new files)
+                           --diff main       changes vs. "main", including uncommitted
+                           --diff "main HEAD" changes strictly between two refs
+  --no-projects          Don't auto-detect sibling package.json projects / cross-project links
 `);
 }
 
@@ -51,17 +74,23 @@ async function main() {
 
   if (args.serve) {
     const { startServer } = require("./src/server");
-    startServer({ targetDir, port: args.port, includeExternal: args.includeExternal });
+    startServer({ targetDir, port: args.port, includeExternal: args.includeExternal, enableProjects: args.enableProjects, diff: args.diff });
     return;
   }
 
   console.log(`Scanning ${targetDir} ...`);
-  const graph = buildGraph(targetDir, { includeExternal: args.includeExternal });
+  const graph = buildGraph(targetDir, { includeExternal: args.includeExternal, enableProjects: args.enableProjects, diff: args.diff });
   console.log(
     `Found ${graph.stats.fileCount} files, ${graph.stats.edgeCount} edges, ` +
       `${graph.stats.externalCount} external deps, ${graph.stats.cycleCount} cycles` +
-      (graph.stats.parseErrorCount ? `, ${graph.stats.parseErrorCount} parse errors` : "")
+      (graph.stats.parseErrorCount ? `, ${graph.stats.parseErrorCount} parse errors` : "") +
+      (graph.stats.projects.length > 1 ? `, ${graph.stats.projects.length} sub-projects` : "")
   );
+  if (graph.stats.diff) {
+    const d = graph.stats.diff;
+    if (d.error) console.log(`  diff warning: ${d.error}`);
+    else console.log(`  diff (${d.spec}): ${d.changedCount} files changed, ${d.impactedCount} modules impacted downstream`);
+  }
 
   if (args.json) {
     fs.writeFileSync(args.json, JSON.stringify(graph, null, 2));
