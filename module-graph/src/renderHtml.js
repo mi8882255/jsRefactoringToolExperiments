@@ -38,6 +38,11 @@ function page({ title, bodyExtra, dataScript }) {
   #reset-view { font-size: 12px; padding: 5px 10px; border-radius: 6px; border: 1px solid #d0d5dd; background: #fff; cursor: pointer; margin-bottom: 10px; }
   #isolated-wrap { font-size: 12px; margin-bottom: 10px; }
   #isolated-wrap summary { cursor: pointer; }
+  .stat-link { cursor: pointer; border-radius: 4px; padding: 0 4px; margin: 0 -4px; }
+  .stat-link:hover { background: #f1ecfe; color: #6d28d9; }
+  #focus-banner { background: #f5f3ff; border: 1px solid #c4b5fd; border-radius: 8px; padding: 8px 10px; margin-bottom: 10px; font-size: 13px; }
+  #focus-banner #focus-title { font-weight: 600; margin: 2px 0 6px; }
+  #clear-focus { font-size: 12px; padding: 4px 10px; border-radius: 6px; border: 1px solid #c4b5fd; background: #fff; cursor: pointer; }
 </style>
 </head>
 <body>
@@ -48,6 +53,11 @@ function page({ title, bodyExtra, dataScript }) {
     ${bodyExtra || ""}
     <div id="mode-switch">
       <button id="mode-file" class="active">File graph</button><button id="mode-project" style="display:none">Project graph</button><button id="mode-interfaces" style="display:none">Interfaces</button>
+    </div>
+    <div id="focus-banner" style="display:none">
+      <div style="font-size:11px;color:#6d28d9;text-transform:uppercase;letter-spacing:.04em">Focused on</div>
+      <div id="focus-title"></div>
+      <button id="clear-focus">Clear focus</button>
     </div>
     <div id="file-controls">
       <input id="search" type="text" placeholder="Filter by path..." />

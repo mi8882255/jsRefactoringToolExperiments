@@ -17,6 +17,7 @@ function clientAppSource() {
     changed: "#d7263d",
     impacted: "#f2a900"
   };
+  var FOCUS_COLOR = "#7c3aed";
   var PROJECT_PALETTE = ["#4f8ef7", "#22b36b", "#c77dff", "#f2a900", "#e5484d", "#2dd4bf", "#f472b6", "#a3a83a"];
 
   function escapeHtml(s) {
@@ -98,11 +99,159 @@ function clientAppSource() {
     };
   }
 
+  // Static layered layout for "show everything" and focus views, where many
+  // nodes appear at once. vis's own hierarchical layout falls apart on
+  // graphs with cycles (it collapses most nodes into one or two giant
+  // columns), so levels are computed here instead: BFS depth from the
+  // roots of the subgraph (nodes nothing in it imports), with any pure
+  // cycle that has no root seeded separately. Within a level, nodes are
+  // ordered by the average position of their parents (barycenter) so
+  // edges mostly run straight instead of criss-crossing, and tall levels
+  // are wrapped into several sub-columns instead of one endless column.
+  function layeredLayout(ids, edges) {
+    var LEVEL_SEP = 280, SUBCOL_SEP = 170, NODE_SPACING = 42, MAX_PER_COL = 30;
+    var inSet = {}, out = {}, inc = {}, indeg = {}, level = {};
+    ids.forEach(function (id) { inSet[id] = true; out[id] = []; inc[id] = []; indeg[id] = 0; });
+    edges.forEach(function (e) {
+      if (inSet[e.from] && inSet[e.to] && e.from !== e.to) {
+        out[e.from].push(e.to);
+        inc[e.to].push(e.from);
+        indeg[e.to]++;
+      }
+    });
+
+    var queue = [];
+    function bfs() {
+      for (var qi = 0; qi < queue.length; qi++) {
+        var cur = queue[qi];
+        out[cur].forEach(function (n) {
+          if (level[n] === undefined) { level[n] = level[cur] + 1; queue.push(n); }
+        });
+      }
+      queue = [];
+    }
+    var sortedIds = ids.slice().sort();
+    sortedIds.forEach(function (id) { if (indeg[id] === 0) { level[id] = 0; queue.push(id); } });
+    bfs();
+    sortedIds.forEach(function (id) {
+      if (level[id] === undefined) { level[id] = 0; queue.push(id); bfs(); }
+    });
+
+    var byLevel = {};
+    sortedIds.forEach(function (id) { (byLevel[level[id]] = byLevel[level[id]] || []).push(id); });
+    var levels = Object.keys(byLevel).map(Number).sort(function (a, b) { return a - b; });
+
+    var order = {};
+    levels.forEach(function (L) {
+      var arr = byLevel[L];
+      var bary = {};
+      arr.forEach(function (id) {
+        var ps = inc[id].filter(function (p) { return order[p] !== undefined; });
+        bary[id] = ps.length ? ps.reduce(function (s, p) { return s + order[p]; }, 0) / ps.length : null;
+      });
+      arr.sort(function (a, b) {
+        var ba = bary[a], bb = bary[b];
+        if (ba === null && bb === null) return a < b ? -1 : 1;
+        if (ba === null) return 1;
+        if (bb === null) return -1;
+        return ba - bb || (a < b ? -1 : 1);
+      });
+      arr.forEach(function (id, i) { order[id] = arr.length > 1 ? i / (arr.length - 1) : 0.5; });
+    });
+
+    var positions = {};
+    var x = 0;
+    levels.forEach(function (L) {
+      var arr = byLevel[L];
+      var cols = Math.ceil(arr.length / MAX_PER_COL);
+      var rows = Math.ceil(arr.length / cols);
+      arr.forEach(function (id, i) {
+        var col = i % cols, row = Math.floor(i / cols);
+        positions[id] = { x: x + col * SUBCOL_SEP, y: (row - (rows - 1) / 2) * NODE_SPACING };
+      });
+      x += (cols - 1) * SUBCOL_SEP + LEVEL_SEP;
+    });
+    return positions;
+  }
+
+  // Cycles drawn as rings, in import order - laid out in layers a cycle
+  // degenerates into a long line with one edge jumping back across the
+  // whole screen. Cycles that share files are merged into a single ring:
+  // each additional cycle's members are spliced in right after the file it
+  // shares with the ring, so e.g. a "user.entity <-> user-comment.entity"
+  // pair ends up as two neighbors on the ring instead of an edge across
+  // it. Separate groups get separate rings, tiled in a grid.
+  function cycleRingsLayout(cycles) {
+    var members = cycles.map(function (c) { return c.slice(0, -1); });
+
+    var parent = members.map(function (_, i) { return i; });
+    function find(i) { while (parent[i] !== i) i = parent[i] = parent[parent[i]]; return i; }
+    var firstCycleOf = {};
+    members.forEach(function (m, i) {
+      m.forEach(function (id) {
+        if (firstCycleOf[id] === undefined) firstCycleOf[id] = i;
+        else parent[find(i)] = find(firstCycleOf[id]);
+      });
+    });
+    var groups = {};
+    members.forEach(function (_, i) { (groups[find(i)] = groups[find(i)] || []).push(i); });
+
+    var rings = Object.keys(groups).map(function (key) {
+      var pending = groups[key].slice();
+      var order = members[pending.shift()].slice();
+      var placed = {};
+      order.forEach(function (id) { placed[id] = true; });
+      while (pending.length) {
+        for (var p = 0; p < pending.length; p++) {
+          var cyc = members[pending[p]];
+          var at = -1, shared = -1;
+          for (var k = 0; k < cyc.length && at === -1; k++) {
+            if (placed[cyc[k]]) { at = order.indexOf(cyc[k]); shared = k; }
+          }
+          if (at === -1) continue;
+          var insert = [];
+          for (var step = 1; step < cyc.length; step++) {
+            var id = cyc[(shared + step) % cyc.length];
+            if (!placed[id]) { placed[id] = true; insert.push(id); }
+          }
+          order.splice.apply(order, [at + 1, 0].concat(insert));
+          pending.splice(p, 1);
+          break;
+        }
+      }
+      return { order: order, radius: Math.max(90, order.length * 140 / (2 * Math.PI)) };
+    });
+
+    var positions = {};
+    var cols = Math.ceil(Math.sqrt(rings.length));
+    var cell = 0;
+    rings.forEach(function (r) { cell = Math.max(cell, r.radius * 2 + 160); });
+    rings.forEach(function (ring, i) {
+      var cx = (i % cols) * cell, cy = Math.floor(i / cols) * cell;
+      ring.order.forEach(function (id, j) {
+        var angle = -Math.PI / 2 + (2 * Math.PI * j) / ring.order.length;
+        positions[id] = { x: cx + ring.radius * Math.cos(angle), y: cy + ring.radius * Math.sin(angle) };
+      });
+    });
+    return positions;
+  }
+
   function computeVisibleSet(graph, state, adjacency, layout) {
     var visible = {};
 
+    if (state.focus) {
+      state.focus.ids.forEach(function (id) { visible[id] = true; });
+      if (state.focus.withNeighbors) {
+        state.focus.ids.forEach(function (id) {
+          (adjacency.childrenOf[id] || []).concat(adjacency.parentsOf[id] || []).forEach(function (n) { visible[n] = true; });
+        });
+      }
+      return visible;
+    }
+
     if (state.showEverything) {
       graph.nodes.forEach(function (n) {
+        if (n.isIsolated) return; // listed separately in the sidebar
         if (state.showExternal || !n.external) visible[n.id] = true;
       });
       return visible;
@@ -155,7 +304,7 @@ function clientAppSource() {
   }
 
   function badgeFor(n, state, adjacency) {
-    if (state.showEverything) return "";
+    if (state.showEverything || state.focus) return "";
     var parts = [];
     var hasMoreDown = (adjacency.childrenOf[n.id] || []).length > 0 && !state.expandedForward.has(n.id);
     var hasMoreUp = (adjacency.parentsOf[n.id] || []).length > 0 && !state.expandedBackward.has(n.id);
@@ -175,6 +324,16 @@ function clientAppSource() {
     visibleNodes.forEach(function (n) { visibleIds[n.id] = true; });
     var visibleEdges = graph.edges.filter(function (e) { return visibleIds[e.from] && visibleIds[e.to]; });
 
+    var staticPositions = null;
+    if (state.focus && state.focus.cycles) staticPositions = cycleRingsLayout(state.focus.cycles);
+    else if (state.focus || state.showEverything) staticPositions = layeredLayout(Object.keys(visibleIds), visibleEdges);
+    var focusIds = {};
+    if (state.focus) state.focus.ids.forEach(function (id) { focusIds[id] = true; });
+    var focusEdges = state.focus && state.focus.edgePairs ? state.focus.edgePairs : {};
+    // hundreds of curved edges are both slow to draw and harder to follow
+    // than straight ones
+    var edgeSmooth = visibleEdges.length > 300 ? false : { type: "cubicBezier", forceDirection: "horizontal", roundness: 0.4 };
+
     var nodes = visibleNodes.map(function (n) {
       var fill = n.parseError ? COLORS.parseError
         : n.unresolved ? COLORS.unresolved
@@ -184,9 +343,13 @@ function clientAppSource() {
         : COLORS.internal;
       var borderColor = n.changed ? BORDER.changed : n.impacted ? BORDER.impacted : fill;
       var borderWidth = n.changed ? 4 : n.impacted ? 3 : 1;
+      if (focusIds[n.id]) {
+        borderColor = FOCUS_COLOR;
+        borderWidth = 4;
+      }
       var badge = badgeFor(n, state, adjacency);
       var baseLabel = n.label.split("/").pop();
-      var pos = state.showEverything ? null : layout.get(n.id);
+      var pos = staticPositions ? staticPositions[n.id] : layout.get(n.id);
 
       var nodeObj = {
         id: n.id,
@@ -197,6 +360,9 @@ function clientAppSource() {
         shape: n.external || n.crossProjectInterface ? "box" : "ellipse",
         font: { color: "#1b1f24", multi: false }
       };
+      // in a focus view, the neighbors pulled in for context are dimmed so
+      // the focused nodes themselves stand out
+      if (state.focus && !focusIds[n.id]) nodeObj.opacity = 0.45;
       if (pos) {
         nodeObj.x = pos.x;
         nodeObj.y = pos.y;
@@ -207,15 +373,19 @@ function clientAppSource() {
 
     var edges = visibleEdges.map(function (e, i) {
       var baseColor = e.kind.indexOf("type") !== -1 ? "#c2c7d0" : "#8a8f98";
+      var emphasized = focusEdges[e.from + "->" + e.to];
       return {
         id: i,
         from: e.from,
         to: e.to,
         arrows: "to",
         title: e.kind + (e.crossProject ? " [cross-project]" : "") + (e.names && e.names.length ? ": " + e.names.join(", ") : ""),
-        color: { color: e.crossProject ? "#7c3aed" : baseColor, opacity: e.crossProject ? 0.9 : 0.6 },
-        width: e.crossProject ? 2 : 1,
-        dashes: e.kind === "dynamic-import"
+        color: emphasized
+          ? { color: COLORS.unresolved, opacity: 1 }
+          : { color: e.crossProject ? "#7c3aed" : baseColor, opacity: e.crossProject ? 0.9 : 0.6 },
+        width: emphasized ? 3 : e.crossProject ? 2 : 1,
+        dashes: e.kind === "dynamic-import",
+        smooth: edgeSmooth
       };
     });
 
@@ -300,33 +470,40 @@ function clientAppSource() {
   // ---------------------------------------------------------------------
   // stats / legend panel
   // ---------------------------------------------------------------------
+  // Each stat that corresponds to something drawable is a link: clicking it
+  // focuses the graph on exactly those nodes (see focusFromStat).
+  function statLine(key, count, text, style) {
+    var attrs = key ? " class='stat-link' data-focus='" + key + "' title='Show on the graph'" : "";
+    return "<div" + attrs + (style ? " style='" + style + "'" : "") + "><b>" + count + "</b> " + text + "</div>";
+  }
+
   function renderStats(graph) {
     var s = graph.stats;
     var html = "";
-    html += "<div><b>" + s.fileCount + "</b> files</div>";
-    html += "<div><b>" + s.edgeCount + "</b> dependency edges</div>";
-    html += "<div><b>" + s.externalCount + "</b> external packages</div>";
+    html += statLine("all", s.fileCount, "files");
+    html += statLine("all", s.edgeCount, "dependency edges");
+    html += statLine(s.externalCount ? "external" : null, s.externalCount, "external packages");
     if (s.builtinSkippedCount) {
-      html += "<div><b>" + s.builtinSkippedCount + "</b> Node builtin imports (excluded)</div>";
+      html += statLine(null, s.builtinSkippedCount, "Node builtin imports (excluded)");
     }
     if (s.isolatedCount) {
-      html += "<div><b>" + s.isolatedCount + "</b> isolated file(s) (no imports, not imported)</div>";
+      html += statLine("isolated", s.isolatedCount, "isolated file(s) (no imports, not imported)");
     }
-    html += "<div><b>" + s.cycleCount + "</b> circular dependency chain(s)</div>";
+    html += statLine(s.cycleCount ? "cycles" : null, s.cycleCount, "circular dependency chain(s)");
     if (s.parseErrorCount) {
-      html += "<div style='color:" + COLORS.parseError + "'><b>" + s.parseErrorCount + "</b> parse error(s)</div>";
+      html += statLine("parse", s.parseErrorCount, "parse error(s)", "color:" + COLORS.parseError);
     }
     if (s.projects && s.projects.length > 1) {
-      html += "<div><b>" + s.projects.length + "</b> sub-projects detected</div>";
+      html += statLine("projects", s.projects.length, "sub-projects detected");
     }
     if (s.interfaceGraph && s.interfaceGraph.edges.length) {
-      html += "<div><b>" + s.interfaceGraph.edges.length + "</b> interface/implements link(s)</div>";
+      html += statLine("interfaces", s.interfaceGraph.edges.length, "interface/implements link(s)");
     }
     if (s.diff) {
       if (s.diff.error) {
         html += "<div style='color:" + COLORS.parseError + "'>diff: " + escapeHtml(s.diff.error) + "</div>";
       } else {
-        html += "<div style='margin-top:6px;padding-top:6px;border-top:1px dashed #e1e4e8'>";
+        html += "<div class='stat-link' data-focus='diff' title='Show on the graph' style='margin-top:6px;padding-top:6px;border-top:1px dashed #e1e4e8'>";
         html += "diff <code>" + escapeHtml(s.diff.spec) + "</code>: ";
         html += "<b style='color:" + BORDER.changed + "'>" + s.diff.changedCount + "</b> changed, ";
         html += "<b style='color:" + BORDER.impacted + "'>" + s.diff.impactedCount + "</b> impacted";
@@ -338,11 +515,12 @@ function clientAppSource() {
     }
     if (s.cycles && s.cycles.length) {
       html += "<details style='margin-top:8px'><summary>Cycles</summary><ul style='margin:4px 0 0 16px;padding:0'>";
-      s.cycles.slice(0, 50).forEach(function (cycle) {
-        html += "<li style='font-size:12px'>" + cycle.map(escapeHtml).join(" &rarr; ") + "</li>";
+      s.cycles.slice(0, 50).forEach(function (cycle, i) {
+        html += "<li class='stat-link' data-cycle='" + i + "' title='Show this cycle on the graph' style='font-size:12px'>" + cycle.map(escapeHtml).join(" &rarr; ") + "</li>";
       });
       html += "</ul></details>";
     }
+    html += "<div style='font-size:11px;color:#888;margin-top:6px'>Click a line to show it on the graph.</div>";
     return html;
   }
 
@@ -379,7 +557,10 @@ function clientAppSource() {
       onlyAffected: false,
       showEverything: false,
       expandedForward: new Set(),
-      expandedBackward: new Set()
+      expandedBackward: new Set(),
+      // { title, ids, withNeighbors, edgePairs } - when set, the file graph
+      // shows exactly these nodes (e.g. one cycle) instead of the normal view
+      focus: null
     };
 
     document.getElementById("only-affected-wrap").style.display = hasDiff ? "block" : "none";
@@ -389,7 +570,6 @@ function clientAppSource() {
     document.getElementById("legend-diff").style.display = hasDiff ? "block" : "none";
     document.getElementById("legend-interfaces").style.display = hasInterfaces ? "block" : "none";
 
-    renderStats(graph);
     document.getElementById("stats").innerHTML = renderStats(graph);
     renderIsolatedList(graph);
 
@@ -401,23 +581,12 @@ function clientAppSource() {
       return buildFileVisData(graph, state, adjacency, layout);
     }
 
-    function networkOptionsFor(mode, st) {
-      if (mode === "file" && st && st.showEverything) {
-        // Nothing is collapsed, so there's no "stay put while expanding"
-        // concern here - let vis lay the whole thing out automatically.
-        return {
-          layout: { hierarchical: { enabled: true, direction: "LR", sortMethod: "directed", levelSeparation: 170, nodeSpacing: 90, treeSpacing: 140 } },
-          physics: false,
-          interaction: { hover: true, tooltipDelay: 120 },
-          edges: { smooth: { type: "cubicBezier", forceDirection: "horizontal", roundness: 0.5 } },
-          nodes: { borderWidth: 1, size: 14 }
-        };
-      }
+    function networkOptionsFor(mode) {
       if (mode === "file") {
-        // Progressive disclosure: every node gets an explicit, permanent
-        // (x, y) from the layout planner (see makeLayoutPlanner) instead of
-        // an automatic layout, so expanding/collapsing never reshuffles or
-        // re-fits anything that was already on screen.
+        // Every file-graph node gets an explicit (x, y) - from the layout
+        // planner while expanding step by step, or from layeredLayout for
+        // "show everything" / focus views - so vis never lays anything out
+        // (or jitters) on its own here.
         return {
           layout: { hierarchical: false },
           physics: false,
@@ -489,9 +658,84 @@ function clientAppSource() {
       refreshView(true, true);
     }
 
-    document.getElementById("mode-file").addEventListener("click", function () { setMode("file"); });
-    document.getElementById("mode-project").addEventListener("click", function () { setMode("project"); });
-    document.getElementById("mode-interfaces").addEventListener("click", function () { setMode("interfaces"); });
+    function setFocus(focus) {
+      state.focus = focus;
+      var banner = document.getElementById("focus-banner");
+      if (focus) {
+        banner.style.display = "block";
+        document.getElementById("focus-title").textContent = focus.title + " — " + focus.ids.length + " node(s)";
+      } else {
+        banner.style.display = "none";
+      }
+    }
+
+    function edgePairsOfCycles(cycles) {
+      var pairs = {};
+      cycles.forEach(function (cycle) {
+        for (var i = 0; i < cycle.length - 1; i++) pairs[cycle[i] + "->" + cycle[i + 1]] = true;
+      });
+      return pairs;
+    }
+
+    function uniqueIdsOfCycles(cycles) {
+      var seen = {};
+      cycles.forEach(function (cycle) { cycle.forEach(function (id) { seen[id] = true; }); });
+      return Object.keys(seen);
+    }
+
+    function idsWhere(pred) {
+      return graph.nodes.filter(pred).map(function (n) { return n.id; });
+    }
+
+    // Turns a clicked stats line into "show exactly that on the graph".
+    function focusFromStat(key, cycleIndex) {
+      var s = graph.stats;
+      if (key === "interfaces") { setFocus(null); setMode("interfaces"); return; }
+      if (key === "projects") { setFocus(null); setMode("project"); return; }
+      if (key === "all") {
+        setFocus(null);
+        state.showEverything = true;
+        document.getElementById("show-everything").checked = true;
+        setMode("file");
+        return;
+      }
+
+      var focus = null;
+      if (cycleIndex !== null) {
+        var cycle = s.cycles[cycleIndex];
+        focus = { title: "Cycle #" + (cycleIndex + 1), ids: uniqueIdsOfCycles([cycle]), edgePairs: edgePairsOfCycles([cycle]), cycles: [cycle] };
+      } else if (key === "cycles") {
+        focus = { title: "All circular dependencies", ids: uniqueIdsOfCycles(s.cycles), edgePairs: edgePairsOfCycles(s.cycles), cycles: s.cycles };
+      } else if (key === "external") {
+        focus = { title: "External packages (+ files using them)", ids: idsWhere(function (n) { return n.external; }), withNeighbors: true };
+      } else if (key === "isolated") {
+        focus = { title: "Isolated files", ids: idsWhere(function (n) { return n.isIsolated; }) };
+      } else if (key === "parse") {
+        focus = { title: "Files with parse errors", ids: idsWhere(function (n) { return !!n.parseError; }), withNeighbors: true };
+      } else if (key === "diff") {
+        focus = { title: "Changed + impacted files", ids: idsWhere(function (n) { return n.changed || n.impacted; }) };
+      }
+      if (!focus || !focus.ids.length) return;
+      setFocus(focus);
+      if (state.mode !== "file") setMode("file");
+      else refreshView(true, true);
+    }
+
+    document.getElementById("stats").addEventListener("click", function (e) {
+      var el = e.target.closest("[data-focus],[data-cycle]");
+      if (!el) return;
+      var cycleAttr = el.getAttribute("data-cycle");
+      focusFromStat(el.getAttribute("data-focus"), cycleAttr === null ? null : Number(cycleAttr));
+    });
+
+    document.getElementById("clear-focus").addEventListener("click", function () {
+      setFocus(null);
+      refreshView(true, true);
+    });
+
+    document.getElementById("mode-file").addEventListener("click", function () { setFocus(null); setMode("file"); });
+    document.getElementById("mode-project").addEventListener("click", function () { setFocus(null); setMode("project"); });
+    document.getElementById("mode-interfaces").addEventListener("click", function () { setFocus(null); setMode("interfaces"); });
 
     document.getElementById("toggle-external").addEventListener("change", function (e) {
       state.showExternal = e.target.checked;
@@ -503,10 +747,12 @@ function clientAppSource() {
     });
     document.getElementById("show-everything").addEventListener("change", function (e) {
       state.showEverything = e.target.checked;
+      setFocus(null);
       layout.reset();
       refreshView(true, true);
     });
     document.getElementById("reset-view").addEventListener("click", function () {
+      setFocus(null);
       state.expandedForward = new Set();
       state.expandedBackward = new Set();
       state.showEverything = false;
@@ -536,7 +782,7 @@ function clientAppSource() {
       var html = "<h3 style='margin:0 0 6px;font-size:13px;word-break:break-all'>" + escapeHtml(id) + "</h3>";
       if (flags.length) html += "<div style='font-size:12px;margin-bottom:6px'>" + flags.join(" &middot; ") + "</div>";
 
-      if (!state.showEverything) {
+      if (!state.showEverything && !state.focus) {
         if (hasMoreDown) {
           var fwdOn = state.expandedForward.has(id);
           html += "<button class='detail-btn' id='exp-fwd'>" + (fwdOn ? "▾ Hide dependencies" : "▸ Show dependencies (" + node.descendantCount + " files, depth " + node.maxDepthDown + ")") + "</button>";
@@ -607,26 +853,37 @@ function clientAppSource() {
       return html;
     }
 
-    // Everything reachable from 'id' within the currently visible nodes,
-    // walking edges in both directions - i.e. "the stuff that's actually
-    // connected to this node", as opposed to the rest of whatever else
-    // happens to already be on screen from earlier, unrelated expansions.
+    // This node's own tree within what's currently visible: everything it
+    // (transitively) imports, plus everything that (transitively) imports
+    // it. Walked as two separate directed passes - an undirected walk would
+    // leak through shared dependencies into unrelated branches and, on a
+    // dense "show everything" graph, light up practically every node.
     function reachableWithinVisible(id, visibleIdsSet) {
       var result = {};
       result[id] = true;
-      var queue = [id];
-      while (queue.length) {
-        var current = queue.shift();
-        var neighbors = (adjacency.childrenOf[current] || []).concat(adjacency.parentsOf[current] || []);
-        for (var i = 0; i < neighbors.length; i++) {
-          var n = neighbors[i];
-          if (visibleIdsSet[n] && !result[n]) {
-            result[n] = true;
-            queue.push(n);
+      [adjacency.childrenOf, adjacency.parentsOf].forEach(function (next) {
+        var seen = {};
+        seen[id] = true;
+        var queue = [id];
+        while (queue.length) {
+          var current = queue.shift();
+          var neighbors = next[current] || [];
+          for (var i = 0; i < neighbors.length; i++) {
+            var n = neighbors[i];
+            if (visibleIdsSet[n] && !seen[n]) {
+              seen[n] = true;
+              result[n] = true;
+              queue.push(n);
+            }
           }
         }
-      }
+      });
       return result;
+    }
+
+    function baseOpacity(nid) {
+      if (state.mode === "file" && state.focus && state.focus.ids.indexOf(nid) === -1) return 0.45;
+      return 1;
     }
 
     function highlightNode(id) {
@@ -683,12 +940,12 @@ function clientAppSource() {
 
       network.on("deselectNode", function () {
         var all = nodesDS.getIds();
-        nodesDS.update(all.map(function (nid) { return { id: nid, opacity: 1 }; }));
+        nodesDS.update(all.map(function (nid) { return { id: nid, opacity: baseOpacity(nid) }; }));
         clearDetail();
       });
 
       network.on("doubleClick", function (params) {
-        if (state.mode !== "file" || state.showEverything) return;
+        if (state.mode !== "file" || state.showEverything || state.focus) return;
         var id = params.nodes[0];
         if (!id) return;
         var hasMoreDown = (adjacency.childrenOf[id] || []).length > 0;
@@ -728,6 +985,7 @@ function clientAppSource() {
             document.getElementById("legend-interfaces").style.display = hasInterfaces ? "block" : "none";
             state.expandedForward = new Set();
             state.expandedBackward = new Set();
+            setFocus(null);
             layout.reset();
             refreshView(false, true);
             document.getElementById("stats").innerHTML = renderStats(graph);
