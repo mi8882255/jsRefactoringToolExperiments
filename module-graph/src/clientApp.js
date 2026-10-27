@@ -30,12 +30,144 @@ function clientAppSource() {
   // adjacency helpers (shared by visibility computation and the detail panel)
   // ---------------------------------------------------------------------
   function buildAdjacency(graph) {
-    var childrenOf = {}, parentsOf = {};
+    var childrenOf = {}, parentsOf = {}, seen = {};
     graph.edges.forEach(function (e) {
+      // the same pair can appear twice (e.g. "import" + "import type")
+      var key = e.from + "->" + e.to;
+      if (seen[key]) return;
+      seen[key] = true;
       (childrenOf[e.from] = childrenOf[e.from] || []).push(e.to);
       (parentsOf[e.to] = parentsOf[e.to] || []).push(e.from);
     });
     return { childrenOf: childrenOf, parentsOf: parentsOf };
+  }
+
+  function isTestFile(id) {
+    return /(^|\\/)(__tests__|tests?|e2e)\\//.test(id) || /\\.(spec|test|e2e-spec)\\.[cm]?[jt]sx?$/.test(id);
+  }
+
+  // The file graph actually drawn: the raw graph minus whatever the sidebar
+  // filters hide. Roles are recomputed for what's left - e.g. with tests
+  // hidden, a service that was only imported by its spec becomes an entry
+  // point - and per-node reach (the "N files, depth D" numbers) is computed
+  // lazily, only for nodes that are actually shown or clicked.
+  function buildFilteredView(graph, filters) {
+    var keep = {};
+    var nodes = [];
+    graph.nodes.forEach(function (n) {
+      if (!filters.showExternal && n.external) return;
+      if (filters.hideTests && isTestFile(n.id)) return;
+      if (filters.pattern && filters.pattern.test(n.id)) return;
+      keep[n.id] = true;
+      nodes.push(Object.assign({}, n));
+    });
+    var edges = graph.edges.filter(function (e) {
+      if (!keep[e.from] || !keep[e.to]) return false;
+      if (filters.hideTypeOnly && e.kind.indexOf("type") !== -1) return false;
+      return true;
+    });
+
+    var view = { nodes: nodes, edges: edges, byId: {}, stats: graph.stats };
+    nodes.forEach(function (n) { view.byId[n.id] = n; });
+    view.adjacency = buildAdjacency(view);
+
+    nodes.forEach(function (n) {
+      var inc = (view.adjacency.parentsOf[n.id] || []).length;
+      var out = (view.adjacency.childrenOf[n.id] || []).length;
+      n.isEntry = !n.external && inc === 0 && out > 0;
+      n.isLeaf = out === 0 && inc > 0;
+      n.isIsolated = inc === 0 && out === 0;
+    });
+
+    var cache = {};
+    function bfs(start, next) {
+      var seen = {};
+      seen[start] = true;
+      var queue = [[start, 0]], count = 0, depth = 0;
+      for (var qi = 0; qi < queue.length; qi++) {
+        var cur = queue[qi];
+        (next[cur[0]] || []).forEach(function (n) {
+          if (!seen[n]) { seen[n] = true; count++; depth = Math.max(depth, cur[1] + 1); queue.push([n, cur[1] + 1]); }
+        });
+      }
+      return { count: count, depth: depth };
+    }
+    view.metrics = function (id) {
+      if (!cache[id]) {
+        var down = bfs(id, view.adjacency.childrenOf);
+        var up = bfs(id, view.adjacency.parentsOf);
+        cache[id] = { down: down.count, depthDown: down.depth, up: up.count, depthUp: up.depth };
+      }
+      return cache[id];
+    };
+    return view;
+  }
+
+  // ---------------------------------------------------------------------
+  // Group by folder: files collapsed into one node per folder (first N
+  // directory levels), edges aggregated with counts. Double-clicking a
+  // folder opens it into its files in place.
+  // ---------------------------------------------------------------------
+  function groupKeyOf(node, depth) {
+    if (!node || node.external || node.unresolved || node.crossProjectInterface) return null;
+    var dirs = node.id.split("/");
+    dirs.pop();
+    if (!dirs.length) return null; // files at the root stay individual
+    return dirs.slice(0, depth).join("/") + "/";
+  }
+
+  function buildGroupGraph(view, depth, expandedGroups) {
+    var displayOf = {};
+    var groups = {};
+    view.nodes.forEach(function (n) {
+      if (n.isIsolated) return;
+      var key = groupKeyOf(n, depth);
+      if (key && !expandedGroups.has(key)) {
+        displayOf[n.id] = "group:" + key;
+        (groups[key] = groups[key] || []).push(n.id);
+      } else {
+        displayOf[n.id] = n.id;
+      }
+    });
+    var edgeCounts = {};
+    view.edges.forEach(function (e) {
+      var a = displayOf[e.from], b = displayOf[e.to];
+      if (!a || !b || a === b) return;
+      var k = a + "->" + b;
+      edgeCounts[k] = (edgeCounts[k] || 0) + 1;
+    });
+    var edges = Object.keys(edgeCounts).map(function (k) {
+      var parts = k.split("->");
+      return { from: parts[0], to: parts[1], count: edgeCounts[k] };
+    });
+    var nodeIds = {};
+    Object.keys(displayOf).forEach(function (id) { nodeIds[displayOf[id]] = true; });
+    return { displayOf: displayOf, groups: groups, nodeIds: Object.keys(nodeIds), edges: edges };
+  }
+
+  // two-line box label: bold file name, folder underneath in small grey
+  function boxLabel(name, sub, badge) {
+    function esc(s) { return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
+    var label = "<b>" + esc(name) + "</b>";
+    if (sub) label += "\\n<i>" + esc(sub) + "</i>";
+    if (badge) label += "\\n<code>" + esc(badge) + "</code>";
+    return label;
+  }
+
+  var BOX_FONT = {
+    multi: "html",
+    size: 11,
+    color: "#1b1f24",
+    bold: { size: 11, color: "#1b1f24" },
+    ital: { size: 9, color: "#5b6270" },
+    mono: { size: 9, color: "#3b4250" }
+  };
+
+  function dirOf(id) {
+    var i = id.lastIndexOf("/");
+    if (i === -1) return "";
+    var dir = id.slice(0, i);
+    return dir.length > 34 ? "…" + dir.slice(dir.length - 33) : dir;
   }
 
   function buildInterfaceIndex(interfaceGraph) {
@@ -65,7 +197,7 @@ function clientAppSource() {
   // revealed subtree grows as a branch out of the node you expanded instead
   // of the whole layout being recomputed and the view having to re-fit.
   function makeLayoutPlanner() {
-    var LEVEL_SEP = 170, NODE_SPACING = 70;
+    var LEVEL_SEP = 260, NODE_SPACING = 60;
     var positions = {};
     var nextYByLevel = {};
 
@@ -109,7 +241,7 @@ function clientAppSource() {
   // edges mostly run straight instead of criss-crossing, and tall levels
   // are wrapped into several sub-columns instead of one endless column.
   function layeredLayout(ids, edges) {
-    var LEVEL_SEP = 280, SUBCOL_SEP = 170, NODE_SPACING = 42, MAX_PER_COL = 30;
+    var LEVEL_SEP = 320, SUBCOL_SEP = 240, NODE_SPACING = 54, MAX_PER_COL = 30;
     var inSet = {}, out = {}, inc = {}, indeg = {}, level = {};
     ids.forEach(function (id) { inSet[id] = true; out[id] = []; inc[id] = []; indeg[id] = 0; });
     edges.forEach(function (e) {
@@ -219,7 +351,7 @@ function clientAppSource() {
           break;
         }
       }
-      return { order: order, radius: Math.max(90, order.length * 140 / (2 * Math.PI)) };
+      return { order: order, radius: Math.max(90, order.length * 210 / (2 * Math.PI)) };
     });
 
     var positions = {};
@@ -252,7 +384,7 @@ function clientAppSource() {
     if (state.showEverything) {
       graph.nodes.forEach(function (n) {
         if (n.isIsolated) return; // listed separately in the sidebar
-        if (state.showExternal || !n.external) visible[n.id] = true;
+        visible[n.id] = true;
       });
       return visible;
     }
@@ -284,13 +416,6 @@ function clientAppSource() {
       });
     });
 
-    if (!state.showExternal) {
-      Object.keys(visible).forEach(function (id) {
-        var n = graph.byId[id];
-        if (n && n.external) delete visible[id];
-      });
-    }
-
     return visible;
   }
 
@@ -303,14 +428,159 @@ function clientAppSource() {
     return t;
   }
 
-  function badgeFor(n, state, adjacency) {
+  function badgeFor(n, state, view) {
     if (state.showEverything || state.focus) return "";
+    var adjacency = view.adjacency;
     var parts = [];
     var hasMoreDown = (adjacency.childrenOf[n.id] || []).length > 0 && !state.expandedForward.has(n.id);
     var hasMoreUp = (adjacency.parentsOf[n.id] || []).length > 0 && !state.expandedBackward.has(n.id);
-    if (hasMoreDown) parts.push("▸" + n.descendantCount + "·d" + n.maxDepthDown);
-    if (hasMoreUp) parts.push("◂" + n.ancestorCount + "·d" + n.maxDepthUp);
+    if (!hasMoreDown && !hasMoreUp) return "";
+    var m = view.metrics(n.id);
+    if (hasMoreDown) parts.push("▸" + m.down + "·d" + m.depthDown);
+    if (hasMoreUp) parts.push("◂" + m.up + "·d" + m.depthUp);
     return parts.join("  ");
+  }
+
+  // pale fill + colored border: readable dark text on every node type
+  var BOX_STYLE = {
+    internal: { background: "#e8f0fe", border: COLORS.internal },
+    entry: { background: "#dcf5e7", border: COLORS.entry },
+    external: { background: "#eef0f3", border: COLORS.external },
+    unresolved: { background: "#fde8e8", border: COLORS.unresolved },
+    parseError: { background: "#fff4e0", border: COLORS.parseError },
+    crossProjectInterface: { background: "#f3e8ff", border: COLORS.crossProjectInterface },
+    group: { background: "#f4f6fa", border: "#64748b" }
+  };
+
+  var THIN_ARROW = { to: { enabled: true, scaleFactor: 0.45 } };
+
+  function boxStyleOf(n) {
+    return n.parseError ? BOX_STYLE.parseError
+      : n.unresolved ? BOX_STYLE.unresolved
+      : n.crossProjectInterface ? BOX_STYLE.crossProjectInterface
+      : n.external ? BOX_STYLE.external
+      : n.isEntry ? BOX_STYLE.entry
+      : BOX_STYLE.internal;
+  }
+
+  function fileNodeObject(n, opts) {
+    var style = boxStyleOf(n);
+    var borderColor = n.changed ? BORDER.changed : n.impacted ? BORDER.impacted : style.border;
+    var borderWidth = n.changed ? 3 : n.impacted ? 2.5 : 1;
+    if (opts.focused) { borderColor = FOCUS_COLOR; borderWidth = 3; }
+    var name = n.external ? n.label : n.label.split("/").pop();
+    var obj = {
+      id: n.id,
+      label: boxLabel(name, n.external ? "" : dirOf(n.id), opts.badge),
+      title: nodeTitle(n),
+      shape: "box",
+      margin: { top: 4, bottom: 4, left: 6, right: 6 },
+      widthConstraint: { maximum: 220 },
+      color: { background: style.background, border: borderColor, highlight: { background: "#fff", border: FOCUS_COLOR } },
+      borderWidth: borderWidth,
+      font: BOX_FONT
+    };
+    if (opts.pos) {
+      obj.x = opts.pos.x;
+      obj.y = opts.pos.y;
+      obj.fixed = { x: true, y: true };
+    }
+    return obj;
+  }
+
+  function fileEdgeObject(e, i, opts) {
+    var baseColor = e.kind && e.kind.indexOf("type") !== -1 ? "#c2c7d0" : "#8a8f98";
+    return {
+      id: i,
+      from: e.from,
+      to: e.to,
+      arrows: THIN_ARROW,
+      title: (e.kind || "") + (e.crossProject ? " [cross-project]" : "") + (e.names && e.names.length ? ": " + e.names.join(", ") : ""),
+      color: opts.emphasized
+        ? { color: COLORS.unresolved, opacity: 1 }
+        : { color: e.crossProject ? "#7c3aed" : baseColor, opacity: e.crossProject ? 0.9 : 0.55 },
+      width: opts.emphasized ? 2 : e.crossProject ? 1.2 : 0.6,
+      dashes: e.kind === "dynamic-import",
+      smooth: opts.smooth
+    };
+  }
+
+  function buildGroupedVisData(view, state, groupLayoutCache) {
+    var collapsedKey = state.groupDepth + "|" + view.nodes.length + "|" + view.edges.length;
+    if (groupLayoutCache.key !== collapsedKey) {
+      // positions come from the fully collapsed folder graph, so opening a
+      // folder never moves the other folders around
+      var collapsed = buildGroupGraph(view, state.groupDepth, new Set());
+      groupLayoutCache.key = collapsedKey;
+      groupLayoutCache.positions = layeredLayout(collapsed.nodeIds, collapsed.edges);
+    }
+    var base = groupLayoutCache.positions;
+    var g = buildGroupGraph(view, state.groupDepth, state.expandedGroups);
+
+    // An opened folder's files go in a small grid starting where the folder
+    // was, and only the nodes below it in the same column are pushed down to
+    // make room - every other column stays exactly where it was.
+    var work = {};
+    Object.keys(base).forEach(function (id) { work[id] = { x: base[id].x, y: base[id].y }; });
+    var positions = {};
+    var opened = [];
+    state.expandedGroups.forEach(function (key) { if (base["group:" + key]) opened.push(key); });
+    opened.sort(function (a, b) { return base["group:" + a].y - base["group:" + b].y; });
+    opened.forEach(function (key) {
+      var anchor = work["group:" + key];
+      var files = view.nodes.filter(function (n) { return !n.isIsolated && groupKeyOf(n, state.groupDepth) === key; });
+      var cols = Math.max(1, Math.ceil(Math.sqrt(files.length / 4)));
+      var rows = Math.ceil(files.length / cols);
+      var ROW_H = 52, COL_W = 230;
+      var extra = rows * ROW_H - ROW_H;
+      var band = (cols * COL_W) / 2 + 120;
+      Object.keys(work).forEach(function (id) {
+        if (id === "group:" + key) return;
+        if (Math.abs(work[id].x - anchor.x) < band && work[id].y > anchor.y + 1) work[id].y += extra;
+      });
+      files.forEach(function (n, i) {
+        var col = i % cols, row = Math.floor(i / cols);
+        positions[n.id] = { x: anchor.x + (col - (cols - 1) / 2) * COL_W, y: anchor.y + row * ROW_H };
+      });
+    });
+    g.nodeIds.forEach(function (id) { if (!positions[id] && work[id]) positions[id] = work[id]; });
+
+    var maxCount = 1;
+    g.edges.forEach(function (e) { if (e.count > maxCount) maxCount = e.count; });
+    var smooth = g.edges.length > 300 ? false : { type: "cubicBezier", forceDirection: "horizontal", roundness: 0.4 };
+
+    var nodes = g.nodeIds.map(function (id) {
+      if (id.indexOf("group:") === 0) {
+        var key = id.slice(6);
+        return {
+          id: id,
+          label: boxLabel(key, g.groups[key].length + " files", ""),
+          title: key + "\\n" + g.groups[key].length + " files\\n(double-click to open)",
+          shape: "box",
+          margin: { top: 6, bottom: 6, left: 8, right: 8 },
+          color: { background: BOX_STYLE.group.background, border: BOX_STYLE.group.border, highlight: { background: "#fff", border: FOCUS_COLOR } },
+          borderWidth: 1.5,
+          shapeProperties: { borderDashes: [4, 3] },
+          font: BOX_FONT,
+          x: positions[id].x, y: positions[id].y, fixed: { x: true, y: true }
+        };
+      }
+      return fileNodeObject(view.byId[id], { pos: positions[id] });
+    });
+    var edges = g.edges.map(function (e, i) {
+      return {
+        id: i,
+        from: e.from,
+        to: e.to,
+        arrows: THIN_ARROW,
+        title: e.count + " import(s)",
+        count: e.count,
+        color: { color: "#8a8f98", opacity: 0.6 },
+        width: 0.6 + 2.5 * Math.log(1 + e.count) / Math.log(1 + maxCount),
+        smooth: smooth
+      };
+    });
+    return { nodes: nodes, edges: edges };
   }
 
   function buildFileVisData(graph, state, adjacency, layout) {
@@ -335,58 +605,24 @@ function clientAppSource() {
     var edgeSmooth = visibleEdges.length > 300 ? false : { type: "cubicBezier", forceDirection: "horizontal", roundness: 0.4 };
 
     var nodes = visibleNodes.map(function (n) {
-      var fill = n.parseError ? COLORS.parseError
-        : n.unresolved ? COLORS.unresolved
-        : n.crossProjectInterface ? COLORS.crossProjectInterface
-        : n.external ? COLORS.external
-        : n.isEntry ? COLORS.entry
-        : COLORS.internal;
-      var borderColor = n.changed ? BORDER.changed : n.impacted ? BORDER.impacted : fill;
-      var borderWidth = n.changed ? 4 : n.impacted ? 3 : 1;
-      if (focusIds[n.id]) {
-        borderColor = FOCUS_COLOR;
-        borderWidth = 4;
-      }
-      var badge = badgeFor(n, state, adjacency);
-      var baseLabel = n.label.split("/").pop();
-      var pos = staticPositions ? staticPositions[n.id] : layout.get(n.id);
-
-      var nodeObj = {
-        id: n.id,
-        label: badge ? baseLabel + "\\n" + badge : baseLabel,
-        title: nodeTitle(n),
-        color: { background: fill, border: borderColor },
-        borderWidth: borderWidth,
-        shape: n.external || n.crossProjectInterface ? "box" : "ellipse",
-        font: { color: "#1b1f24", multi: false }
-      };
+      var nodeObj = fileNodeObject(n, {
+        badge: badgeFor(n, state, graph),
+        focused: !!focusIds[n.id],
+        pos: staticPositions ? staticPositions[n.id] : layout.get(n.id)
+      });
       // in a focus view, the neighbors pulled in for context are dimmed so
       // the focused nodes themselves stand out
       if (state.focus && !focusIds[n.id]) nodeObj.opacity = 0.45;
-      if (pos) {
-        nodeObj.x = pos.x;
-        nodeObj.y = pos.y;
-        nodeObj.fixed = { x: true, y: true };
-      }
       return nodeObj;
     });
 
-    var edges = visibleEdges.map(function (e, i) {
-      var baseColor = e.kind.indexOf("type") !== -1 ? "#c2c7d0" : "#8a8f98";
-      var emphasized = focusEdges[e.from + "->" + e.to];
-      return {
-        id: i,
-        from: e.from,
-        to: e.to,
-        arrows: "to",
-        title: e.kind + (e.crossProject ? " [cross-project]" : "") + (e.names && e.names.length ? ": " + e.names.join(", ") : ""),
-        color: emphasized
-          ? { color: COLORS.unresolved, opacity: 1 }
-          : { color: e.crossProject ? "#7c3aed" : baseColor, opacity: e.crossProject ? 0.9 : 0.6 },
-        width: emphasized ? 3 : e.crossProject ? 2 : 1,
-        dashes: e.kind === "dynamic-import",
-        smooth: edgeSmooth
-      };
+    var drawnPairs = {};
+    var edges = [];
+    visibleEdges.forEach(function (e) {
+      var pair = e.from + "->" + e.to;
+      if (drawnPairs[pair]) return; // "import" + "import type" of the same file -> one arrow
+      drawnPairs[pair] = true;
+      edges.push(fileEdgeObject(e, edges.length, { emphasized: focusEdges[pair], smooth: edgeSmooth }));
     });
 
     return { nodes: nodes, edges: edges };
@@ -418,7 +654,7 @@ function clientAppSource() {
         id: i,
         from: e.from,
         to: e.to,
-        arrows: "to",
+        arrows: THIN_ARROW,
         label: String(e.count),
         title: e.count + " cross-project import(s)",
         width: 1 + 6 * (e.count / maxCount),
@@ -456,7 +692,7 @@ function clientAppSource() {
         id: i,
         from: e.from,
         to: e.to,
-        arrows: "to",
+        arrows: THIN_ARROW,
         label: e.relation,
         dashes: true,
         color: { color: "#6366f1" },
@@ -548,16 +784,28 @@ function clientAppSource() {
 
     graph.byId = {};
     graph.nodes.forEach(function (n) { graph.byId[n.id] = n; });
-    var adjacency = buildAdjacency(graph);
     var ifaceIndex = buildInterfaceIndex(graph.stats.interfaceGraph);
+
+    var filters = { showExternal: true, hideTests: false, hideTypeOnly: false, pattern: null };
+    var view = buildFilteredView(graph, filters);
+    var adjacency = view.adjacency;
+    var groupLayoutCache = {};
+
+    function rebuildView() {
+      view = buildFilteredView(graph, filters);
+      adjacency = view.adjacency;
+      groupLayoutCache = {};
+      renderIsolatedList(view);
+    }
 
     var state = {
       mode: "file",
-      showExternal: true,
       onlyAffected: false,
       showEverything: false,
       expandedForward: new Set(),
       expandedBackward: new Set(),
+      groupDepth: 0,
+      expandedGroups: new Set(),
       // { title, ids, withNeighbors, edgePairs } - when set, the file graph
       // shows exactly these nodes (e.g. one cycle) instead of the normal view
       focus: null
@@ -571,14 +819,25 @@ function clientAppSource() {
     document.getElementById("legend-interfaces").style.display = hasInterfaces ? "block" : "none";
 
     document.getElementById("stats").innerHTML = renderStats(graph);
-    renderIsolatedList(graph);
+    renderIsolatedList(view);
 
     var layout = makeLayoutPlanner();
+
+    function inGroupMode() {
+      return state.mode === "file" && state.groupDepth > 0 && !state.focus;
+    }
 
     function currentData() {
       if (state.mode === "project") return buildProjectVisData(graph);
       if (state.mode === "interfaces") return buildInterfaceVisData(graph);
-      return buildFileVisData(graph, state, adjacency, layout);
+      if (inGroupMode()) return buildGroupedVisData(view, state, groupLayoutCache);
+      return buildFileVisData(view, state, adjacency, layout);
+    }
+
+    function updateViewSummary() {
+      var el = document.getElementById("view-summary");
+      if (state.mode !== "file") { el.textContent = ""; return; }
+      el.textContent = "On screen: " + nodesDS.length + " nodes, " + edgesDS.length + " edges";
     }
 
     function networkOptionsFor(mode) {
@@ -636,6 +895,7 @@ function clientAppSource() {
       nodesDS.clear(); nodesDS.add(d.nodes);
       edgesDS.clear(); edgesDS.add(d.edges);
       clearDetail();
+      updateViewSummary();
       if (recreate) {
         recreateNetwork(fit);
       } else {
@@ -654,7 +914,7 @@ function clientAppSource() {
         document.getElementById(btnId).classList.toggle("active", btnId === "mode-" + mode);
       });
       document.getElementById("file-controls").style.display = mode === "file" ? "block" : "none";
-      document.getElementById("isolated-wrap").style.display = mode === "file" && graph.nodes.some(function (n) { return n.isIsolated; }) ? "block" : "none";
+      document.getElementById("isolated-wrap").style.display = mode === "file" && view.nodes.some(function (n) { return n.isIsolated; }) ? "block" : "none";
       refreshView(true, true);
     }
 
@@ -709,7 +969,7 @@ function clientAppSource() {
       } else if (key === "external") {
         focus = { title: "External packages (+ files using them)", ids: idsWhere(function (n) { return n.external; }), withNeighbors: true };
       } else if (key === "isolated") {
-        focus = { title: "Isolated files", ids: idsWhere(function (n) { return n.isIsolated; }) };
+        focus = { title: "Isolated files", ids: view.nodes.filter(function (n) { return n.isIsolated; }).map(function (n) { return n.id; }) };
       } else if (key === "parse") {
         focus = { title: "Files with parse errors", ids: idsWhere(function (n) { return !!n.parseError; }), withNeighbors: true };
       } else if (key === "diff") {
@@ -737,9 +997,50 @@ function clientAppSource() {
     document.getElementById("mode-project").addEventListener("click", function () { setFocus(null); setMode("project"); });
     document.getElementById("mode-interfaces").addEventListener("click", function () { setFocus(null); setMode("interfaces"); });
 
+    function applyFilters() {
+      rebuildView();
+      layout.reset();
+      refreshView(true, true);
+    }
+
     document.getElementById("toggle-external").addEventListener("change", function (e) {
-      state.showExternal = e.target.checked;
-      refreshView(false);
+      filters.showExternal = e.target.checked;
+      applyFilters();
+    });
+    document.getElementById("hide-tests").addEventListener("change", function (e) {
+      filters.hideTests = e.target.checked;
+      applyFilters();
+    });
+    document.getElementById("hide-type-only").addEventListener("change", function (e) {
+      filters.hideTypeOnly = e.target.checked;
+      applyFilters();
+    });
+    var patternTimer = null;
+    document.getElementById("hide-pattern").addEventListener("input", function (e) {
+      var input = e.target;
+      clearTimeout(patternTimer);
+      patternTimer = setTimeout(function () {
+        var text = input.value.trim();
+        input.classList.remove("invalid");
+        if (!text) {
+          filters.pattern = null;
+        } else {
+          try {
+            filters.pattern = new RegExp(text, "i");
+          } catch (err) {
+            input.classList.add("invalid");
+            return;
+          }
+        }
+        applyFilters();
+      }, 300);
+    });
+    document.getElementById("group-depth").addEventListener("change", function (e) {
+      state.groupDepth = Number(e.target.value);
+      state.expandedGroups = new Set();
+      groupLayoutCache = {};
+      setFocus(null);
+      refreshView(true, true);
     });
     document.getElementById("only-affected").addEventListener("change", function (e) {
       state.onlyAffected = e.target.checked;
@@ -769,27 +1070,45 @@ function clientAppSource() {
       });
     });
 
+    // A clickable entry in a detail-panel list: clicking it navigates to
+    // that node (see navigateTo). 'rel' says how it relates to the node the
+    // panel is showing, so a not-yet-visible target can be revealed by
+    // expanding in the right direction.
+    function navItem(targetId, rel, text) {
+      return "<li class='nav-link' data-nav='" + escapeHtml(targetId) + "' data-rel='" + rel + "' title='Go to this node'>" + (text || escapeHtml(targetId)) + "</li>";
+    }
+
+    function navList(items) {
+      return "<ul class='nav-list'>" + items.join("") + "</ul>";
+    }
+
     function renderFileDetail(id) {
-      var node = graph.byId[id];
+      var node = view.byId[id];
       if (!node) return "";
       var hasMoreDown = (adjacency.childrenOf[id] || []).length > 0;
       var hasMoreUp = (adjacency.parentsOf[id] || []).length > 0;
       var flags = [];
       if (node.changed) flags.push("<span style='color:" + BORDER.changed + "'>changed</span>");
       if (node.impacted) flags.push("<span style='color:" + BORDER.impacted + "'>impacted</span>");
-      if (node.project) flags.push("project: " + escapeHtml(node.project));
+      if (node.project && graph.stats.projects && graph.stats.projects.length > 1) flags.push("project: " + escapeHtml(node.project));
 
       var html = "<h3 style='margin:0 0 6px;font-size:13px;word-break:break-all'>" + escapeHtml(id) + "</h3>";
       if (flags.length) html += "<div style='font-size:12px;margin-bottom:6px'>" + flags.join(" &middot; ") + "</div>";
 
-      if (!state.showEverything && !state.focus) {
+      if (inGroupMode()) {
+        var key = groupKeyOf(node, state.groupDepth);
+        if (key && state.expandedGroups.has(key)) {
+          html += "<button class='detail-btn' id='collapse-group' data-group='" + escapeHtml(key) + "'>▴ Collapse folder " + escapeHtml(key) + "</button>";
+        }
+      } else if (!state.showEverything && !state.focus) {
+        var m = view.metrics(id);
         if (hasMoreDown) {
           var fwdOn = state.expandedForward.has(id);
-          html += "<button class='detail-btn' id='exp-fwd'>" + (fwdOn ? "▾ Hide dependencies" : "▸ Show dependencies (" + node.descendantCount + " files, depth " + node.maxDepthDown + ")") + "</button>";
+          html += "<button class='detail-btn' id='exp-fwd'>" + (fwdOn ? "▾ Hide dependencies" : "▸ Show dependencies (" + m.down + " files, depth " + m.depthDown + ")") + "</button>";
         }
         if (hasMoreUp) {
           var bwdOn = state.expandedBackward.has(id);
-          html += "<button class='detail-btn' id='exp-bwd'>" + (bwdOn ? "▴ Hide importers" : "◂ Show who imports this (" + node.ancestorCount + " files, depth " + node.maxDepthUp + ")") + "</button>";
+          html += "<button class='detail-btn' id='exp-bwd'>" + (bwdOn ? "▴ Hide importers" : "◂ Show who imports this (" + m.up + " files, depth " + m.depthUp + ")") + "</button>";
         }
       }
 
@@ -800,28 +1119,55 @@ function clientAppSource() {
         if (ifaceNode.kind === "class") {
           var implementsEdges = ifaceIndex.outgoingFrom[ifaceId] || [];
           if (implementsEdges.length) {
-            html += "<div style='font-size:12px;margin-top:8px'><b>" + escapeHtml(ifaceNode.label) + "</b> " + implementsEdges[0].relation + ":</div>";
-            html += "<ul style='font-size:12px;margin:2px 0 0 16px;padding:0'>" + implementsEdges.map(function (e) {
+            html += "<div class='detail-label'><b>" + escapeHtml(ifaceNode.label) + "</b> " + implementsEdges[0].relation + ":</div>";
+            html += navList(implementsEdges.map(function (e) {
               var target = ifaceIndex.nodesById[e.to];
-              return "<li>" + escapeHtml(target.label) + (target.file ? " (" + escapeHtml(target.file) + ")" : " <i>(not in this scan)</i>") + "</li>";
-            }).join("") + "</ul>";
+              if (!target.file) return "<li>" + escapeHtml(target.label) + " <i>(not in this scan)</i></li>";
+              return navItem(target.file, "any", escapeHtml(target.label) + " <span class='muted'>" + escapeHtml(target.file) + "</span>");
+            }));
           }
         } else {
           var implementedBy = ifaceIndex.incomingTo[ifaceId] || [];
           if (implementedBy.length) {
-            html += "<div style='font-size:12px;margin-top:8px'><b>" + escapeHtml(ifaceNode.label) + "</b> realized by:</div>";
-            html += "<ul style='font-size:12px;margin:2px 0 0 16px;padding:0'>" + implementedBy.map(function (e) {
+            html += "<div class='detail-label'><b>" + escapeHtml(ifaceNode.label) + "</b> realized by:</div>";
+            html += navList(implementedBy.map(function (e) {
               var source = ifaceIndex.nodesById[e.from];
-              return "<li>" + escapeHtml(source.label) + " (" + escapeHtml(source.file) + ")</li>";
-            }).join("") + "</ul>";
+              return navItem(source.file, "any", escapeHtml(source.label) + " <span class='muted'>" + escapeHtml(source.file) + "</span>");
+            }));
           }
         }
       });
 
-      html += "<div style='font-size:12px;color:#666;margin-top:8px'>imported by (" + (adjacency.parentsOf[id] || []).length + "):</div>";
-      html += "<ul style='font-size:12px;margin:2px 0 8px 16px;padding:0'>" + (adjacency.parentsOf[id] || []).map(function (x) { return "<li>" + escapeHtml(x) + "</li>"; }).join("") + "</ul>";
-      html += "<div style='font-size:12px;color:#666'>imports (" + (adjacency.childrenOf[id] || []).length + "):</div>";
-      html += "<ul style='font-size:12px;margin:2px 0 0 16px;padding:0'>" + (adjacency.childrenOf[id] || []).map(function (x) { return "<li>" + escapeHtml(x) + "</li>"; }).join("") + "</ul>";
+      var parents = adjacency.parentsOf[id] || [];
+      var children = adjacency.childrenOf[id] || [];
+      html += "<div class='detail-label'>imported by (" + parents.length + "):</div>";
+      html += navList(parents.map(function (x) { return navItem(x, "parent"); }));
+      html += "<div class='detail-label'>imports (" + children.length + "):</div>";
+      html += navList(children.map(function (x) { return navItem(x, "child"); }));
+      return html;
+    }
+
+    function renderGroupDetail(groupId) {
+      var key = groupId.slice(6);
+      var files = view.nodes.filter(function (n) { return !n.isIsolated && groupKeyOf(n, state.groupDepth) === key; });
+      var outCounts = {}, inCounts = {};
+      edgesDS.forEach(function (e) {
+        if (e.from === groupId) outCounts[e.to] = (outCounts[e.to] || 0) + (e.count || 1);
+        if (e.to === groupId) inCounts[e.from] = (inCounts[e.from] || 0) + (e.count || 1);
+      });
+      function countList(counts, rel) {
+        return navList(Object.keys(counts).sort(function (a, b) { return counts[b] - counts[a]; }).map(function (id) {
+          var label = id.indexOf("group:") === 0 ? id.slice(6) : id;
+          return navItem(id, rel, escapeHtml(label) + " <span class='muted'>(" + counts[id] + ")</span>");
+        }));
+      }
+      var html = "<h3 style='margin:0 0 6px;font-size:13px;word-break:break-all'>" + escapeHtml(key) + "</h3>";
+      html += "<div style='font-size:12px;margin-bottom:6px'>folder &middot; " + files.length + " files</div>";
+      html += "<button class='detail-btn' id='open-group' data-group='" + escapeHtml(key) + "'>▾ Open folder (or double-click it)</button>";
+      html += "<div class='detail-label'>used by (" + Object.keys(inCounts).length + "):</div>" + countList(inCounts, "parent");
+      html += "<div class='detail-label'>depends on (" + Object.keys(outCounts).length + "):</div>" + countList(outCounts, "child");
+      html += "<details><summary class='detail-label' style='cursor:pointer'>files (" + files.length + ")</summary>" +
+        navList(files.map(function (n) { return navItem(n.id, "any", escapeHtml(n.id.slice(key.length))); })) + "</details>";
       return html;
     }
 
@@ -830,10 +1176,10 @@ function clientAppSource() {
       var dependsOn = pg.edges.filter(function (e) { return e.from === id; });
       var usedBy = pg.edges.filter(function (e) { return e.to === id; });
       return "<h3 style='margin:0 0 6px;font-size:13px;word-break:break-all'>" + escapeHtml(id) + "</h3>" +
-        "<div style='font-size:12px;color:#666'>depends on:</div>" +
-        "<ul style='font-size:12px;margin:2px 0 8px 16px;padding:0'>" + dependsOn.map(function (e) { return "<li>" + escapeHtml(e.to) + " (" + e.count + ")</li>"; }).join("") + "</ul>" +
-        "<div style='font-size:12px;color:#666'>used by:</div>" +
-        "<ul style='font-size:12px;margin:2px 0 0 16px;padding:0'>" + usedBy.map(function (e) { return "<li>" + escapeHtml(e.from) + " (" + e.count + ")</li>"; }).join("") + "</ul>";
+        "<div class='detail-label'>depends on:</div>" +
+        navList(dependsOn.map(function (e) { return navItem(e.to, "any", escapeHtml(e.to) + " <span class='muted'>(" + e.count + ")</span>"); })) +
+        "<div class='detail-label'>used by:</div>" +
+        navList(usedBy.map(function (e) { return navItem(e.from, "any", escapeHtml(e.from) + " <span class='muted'>(" + e.count + ")</span>"); }));
     }
 
     function renderInterfaceDetail(id) {
@@ -843,12 +1189,12 @@ function clientAppSource() {
       var out = ifaceIndex.outgoingFrom[id] || [];
       var inc = ifaceIndex.incomingTo[id] || [];
       if (out.length) {
-        html += "<div style='font-size:12px;color:#666'>" + out[0].relation + ":</div><ul style='font-size:12px;margin:2px 0 8px 16px;padding:0'>" +
-          out.map(function (e) { var t = ifaceIndex.nodesById[e.to]; return "<li>" + escapeHtml(t.label) + "</li>"; }).join("") + "</ul>";
+        html += "<div class='detail-label'>" + out[0].relation + ":</div>" +
+          navList(out.map(function (e) { var t = ifaceIndex.nodesById[e.to]; return navItem(e.to, "any", escapeHtml(t.label)); }));
       }
       if (inc.length) {
-        html += "<div style='font-size:12px;color:#666'>realized by:</div><ul style='font-size:12px;margin:2px 0 0 16px;padding:0'>" +
-          inc.map(function (e) { var s = ifaceIndex.nodesById[e.from]; return "<li>" + escapeHtml(s.label) + " (" + escapeHtml(s.file) + ")</li>"; }).join("") + "</ul>";
+        html += "<div class='detail-label'>realized by:</div>" +
+          navList(inc.map(function (e) { var s = ifaceIndex.nodesById[e.from]; return navItem(e.from, "any", escapeHtml(s.label) + " <span class='muted'>" + escapeHtml(s.file) + "</span>"); }));
       }
       return html;
     }
@@ -859,9 +1205,15 @@ function clientAppSource() {
     // leak through shared dependencies into unrelated branches and, on a
     // dense "show everything" graph, light up practically every node.
     function reachableWithinVisible(id, visibleIdsSet) {
+      // walk the edges actually drawn, so this also works for folder nodes
+      var shown = { childrenOf: {}, parentsOf: {} };
+      edgesDS.forEach(function (e) {
+        (shown.childrenOf[e.from] = shown.childrenOf[e.from] || []).push(e.to);
+        (shown.parentsOf[e.to] = shown.parentsOf[e.to] || []).push(e.from);
+      });
       var result = {};
       result[id] = true;
-      [adjacency.childrenOf, adjacency.parentsOf].forEach(function (next) {
+      [shown.childrenOf, shown.parentsOf].forEach(function (next) {
         var seen = {};
         seen[id] = true;
         var queue = [id];
@@ -909,12 +1261,88 @@ function clientAppSource() {
       if (state.mode === "project") { panel.innerHTML = renderProjectDetail(id); return; }
       if (state.mode === "interfaces") { panel.innerHTML = renderInterfaceDetail(id); return; }
 
+      if (String(id).indexOf("group:") === 0) {
+        panel.innerHTML = renderGroupDetail(id);
+        document.getElementById("open-group").addEventListener("click", function () { toggleGroup(id.slice(6), null); });
+        return;
+      }
       panel.innerHTML = renderFileDetail(id);
       var fwdBtn = document.getElementById("exp-fwd");
       if (fwdBtn) fwdBtn.addEventListener("click", function () { toggleExpand(id, "forward"); });
       var bwdBtn = document.getElementById("exp-bwd");
       if (bwdBtn) bwdBtn.addEventListener("click", function () { toggleExpand(id, "backward"); });
+      var collapseBtn = document.getElementById("collapse-group");
+      if (collapseBtn) collapseBtn.addEventListener("click", function () { toggleGroup(collapseBtn.getAttribute("data-group"), null); });
     }
+
+    function selectAndShow(id, center) {
+      if (!nodesDS.get(id)) return false;
+      network.selectNodes([id]);
+      highlightNode(id);
+      showDetailFor(id);
+      if (center) {
+        // pan only - keep whatever zoom level the user picked
+        network.focus(id, { scale: network.getScale(), animation: { duration: 350, easingFunction: "easeInOutQuad" } });
+      }
+      return true;
+    }
+
+    // Opens/closes a folder in "group by folder" mode. Opening keeps every
+    // other folder where it was; the folder's files appear in its place.
+    function toggleGroup(key, selectAfter) {
+      if (state.expandedGroups.has(key)) state.expandedGroups.delete(key); else state.expandedGroups.add(key);
+      refreshView(false, false);
+      var select = selectAfter || (state.expandedGroups.has(key) ? null : "group:" + key);
+      if (select) selectAndShow(select, false);
+    }
+
+    // Clicking an entry in the detail panel's lists: get that node on
+    // screen if it isn't (opening its folder, expanding the current node in
+    // the matching direction, or - failing that - focusing on it with its
+    // neighbors), then select it and pan to it.
+    function navigateTo(target, rel, fromId) {
+      if (state.mode !== "file") { selectAndShow(target, true); return; }
+      var isGroup = target.indexOf("group:") === 0;
+      if (!isGroup && !view.byId[target]) {
+        flashMessage("That file is hidden by the current filters.");
+        return;
+      }
+      if (nodesDS.get(target)) { selectAndShow(target, true); return; }
+
+      if (inGroupMode() && !isGroup) {
+        var key = groupKeyOf(view.byId[target], state.groupDepth);
+        if (key && !state.expandedGroups.has(key)) {
+          state.expandedGroups.add(key);
+          refreshView(false, false);
+        }
+      } else if (!state.showEverything && !state.focus && fromId) {
+        if (rel === "child") state.expandedForward.add(fromId);
+        else if (rel === "parent") state.expandedBackward.add(fromId);
+        refreshView(false, false);
+      }
+
+      if (!nodesDS.get(target)) {
+        setFocus({ title: target.split("/").pop() + " and its neighbors", ids: [target], withNeighbors: true });
+        refreshView(true, false);
+      }
+      selectAndShow(target, true);
+    }
+
+    var flashTimer = null;
+    function flashMessage(text) {
+      var el = document.getElementById("view-summary");
+      el.textContent = text;
+      el.classList.add("flash");
+      clearTimeout(flashTimer);
+      flashTimer = setTimeout(function () { el.classList.remove("flash"); updateViewSummary(); }, 2200);
+    }
+
+    document.getElementById("detail").addEventListener("click", function (e) {
+      var el = e.target.closest("[data-nav]");
+      if (!el) return;
+      var selected = network.getSelectedNodes();
+      navigateTo(el.getAttribute("data-nav"), el.getAttribute("data-rel"), selected[0]);
+    });
 
     // Expands/collapses one node's direct neighbors in the given direction,
     // without moving the camera or anything already on screen - the newly
@@ -945,9 +1373,16 @@ function clientAppSource() {
       });
 
       network.on("doubleClick", function (params) {
-        if (state.mode !== "file" || state.showEverything || state.focus) return;
         var id = params.nodes[0];
-        if (!id) return;
+        if (!id || state.mode !== "file") return;
+        if (inGroupMode()) {
+          // double-click a folder to open it, a file inside an open folder to close it again
+          if (id.indexOf("group:") === 0) { toggleGroup(id.slice(6), null); return; }
+          var key = groupKeyOf(view.byId[id], state.groupDepth);
+          if (key && state.expandedGroups.has(key)) toggleGroup(key, "group:" + key);
+          return;
+        }
+        if (state.showEverything || state.focus) return;
         var hasMoreDown = (adjacency.childrenOf[id] || []).length > 0;
         var hasMoreUp = (adjacency.parentsOf[id] || []).length > 0;
         if (hasMoreDown) toggleExpand(id, "forward");
@@ -959,7 +1394,7 @@ function clientAppSource() {
     refreshView(false, true);
 
     // exposed for debugging in devtools (and for automated UI tests)
-    window.__moduleGraph = { graph: graph, state: state, getNetwork: function () { return network; } };
+    window.__moduleGraph = { state: state, getNetwork: function () { return network; }, getView: function () { return view; } };
 
     var rescanBtn = document.getElementById("rescan");
     if (rescanBtn) {
@@ -972,7 +1407,7 @@ function clientAppSource() {
             graph = freshGraph;
             graph.byId = {};
             graph.nodes.forEach(function (n) { graph.byId[n.id] = n; });
-            adjacency = buildAdjacency(graph);
+            rebuildView();
             ifaceIndex = buildInterfaceIndex(graph.stats.interfaceGraph);
             hasDiff = !!(graph.stats.diff && !graph.stats.diff.error);
             hasProjects = graph.stats.projects && graph.stats.projects.length > 1;
@@ -987,9 +1422,9 @@ function clientAppSource() {
             state.expandedBackward = new Set();
             setFocus(null);
             layout.reset();
+            state.expandedGroups = new Set();
             refreshView(false, true);
             document.getElementById("stats").innerHTML = renderStats(graph);
-            renderIsolatedList(graph);
           })
           .finally(function () {
             rescanBtn.disabled = false;

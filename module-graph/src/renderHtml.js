@@ -19,12 +19,12 @@ function page({ title, bodyExtra, dataScript }) {
   html, body { margin: 0; height: 100%; font-family: -apple-system, Segoe UI, Roboto, sans-serif; color: #1b1f24; }
   #app { display: flex; height: 100vh; }
   #network { flex: 1 1 auto; background: #fafbfc; }
-  #sidebar { width: 280px; flex: 0 0 280px; border-left: 1px solid #e1e4e8; padding: 12px; overflow-y: auto; box-sizing: border-box; }
+  #sidebar { width: 310px; flex: 0 0 310px; border-left: 1px solid #e1e4e8; padding: 12px; overflow-y: auto; box-sizing: border-box; }
   #sidebar h1 { font-size: 15px; margin: 0 0 10px; }
   #sidebar input[type="text"] { width: 100%; padding: 6px 8px; box-sizing: border-box; border: 1px solid #d0d5dd; border-radius: 6px; margin-bottom: 10px; }
   #stats { font-size: 13px; line-height: 1.6; border-bottom: 1px solid #e1e4e8; padding-bottom: 10px; margin-bottom: 10px; }
   #legend { font-size: 12px; margin-bottom: 10px; }
-  #legend span { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
+  #legend span { display: inline-block; width: 12px; height: 9px; border-radius: 2px; margin-right: 6px; vertical-align: middle; }
   #detail { border-top: 1px solid #e1e4e8; padding-top: 10px; margin-top: 10px; }
   #rescan { margin-bottom: 10px; padding: 6px 10px; border-radius: 6px; border: 1px solid #d0d5dd; background: #fff; cursor: pointer; }
   label.toggle { font-size: 12px; display: block; margin-bottom: 10px; }
@@ -43,6 +43,20 @@ function page({ title, bodyExtra, dataScript }) {
   #focus-banner { background: #f5f3ff; border: 1px solid #c4b5fd; border-radius: 8px; padding: 8px 10px; margin-bottom: 10px; font-size: 13px; }
   #focus-banner #focus-title { font-weight: 600; margin: 2px 0 6px; }
   #clear-focus { font-size: 12px; padding: 4px 10px; border-radius: 6px; border: 1px solid #c4b5fd; background: #fff; cursor: pointer; }
+  #filters { border: 1px solid #e1e4e8; border-radius: 8px; padding: 6px 10px 2px; margin-bottom: 8px; }
+  #filters summary { font-size: 12px; font-weight: 600; cursor: pointer; margin-bottom: 6px; }
+  #filters label.toggle { margin-bottom: 6px; }
+  #filters input[type="text"] { margin-bottom: 6px; font-size: 12px; }
+  #filters input.invalid { border-color: #e5484d; background: #fff5f5; }
+  #group-depth { font-size: 12px; margin-left: 4px; }
+  #view-summary { font-size: 11px; color: #888; margin-bottom: 10px; min-height: 14px; transition: color .2s; }
+  #view-summary.flash { color: #d7263d; }
+  .detail-label { font-size: 12px; color: #666; margin-top: 8px; }
+  .nav-list { font-size: 12px; margin: 2px 0 6px 0; padding: 0; list-style: none; }
+  .nav-list li { padding: 2px 6px; border-radius: 4px; word-break: break-all; }
+  .nav-link { cursor: pointer; color: #1d4ed8; }
+  .nav-link:hover { background: #eef2ff; }
+  .muted { color: #888; }
 </style>
 </head>
 <body>
@@ -61,10 +75,26 @@ function page({ title, bodyExtra, dataScript }) {
     </div>
     <div id="file-controls">
       <input id="search" type="text" placeholder="Filter by path..." />
-      <label class="toggle"><input id="toggle-external" type="checkbox" checked /> Show external packages</label>
       <label class="toggle" id="only-affected-wrap" style="display:none"><input id="only-affected" type="checkbox" /> Show only changed/impacted</label>
       <label class="toggle"><input id="show-everything" type="checkbox" /> Show everything (skip collapse)</label>
       <button id="reset-view">Reset to entry points</button>
+      <details id="filters" open>
+        <summary>Filters</summary>
+        <label class="toggle"><input id="toggle-external" type="checkbox" checked /> Show external packages</label>
+        <label class="toggle"><input id="hide-tests" type="checkbox" /> Hide tests (*.spec, *.test, tests/)</label>
+        <label class="toggle"><input id="hide-type-only" type="checkbox" /> Hide type-only imports</label>
+        <input id="hide-pattern" type="text" placeholder="Hide paths (regex): \\.dto\\.|migrations" />
+        <label class="toggle">Group by folder:
+          <select id="group-depth">
+            <option value="0">off</option>
+            <option value="1">1 level</option>
+            <option value="2">2 levels</option>
+            <option value="3">3 levels</option>
+            <option value="4">4 levels</option>
+          </select>
+        </label>
+      </details>
+      <div id="view-summary"></div>
       <div id="isolated-wrap" style="display:none"><div id="isolated-list"></div></div>
     </div>
     <div id="legend">
