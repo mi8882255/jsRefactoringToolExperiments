@@ -57,7 +57,48 @@ function clientAppSource() {
   // File graph: progressive disclosure (only entry points shown by
   // default; expanding a node reveals its direct children/parents)
   // ---------------------------------------------------------------------
-  function computeVisibleSet(graph, state, adjacency) {
+  // Assigns a fixed (x, y) to each node the first time it becomes visible,
+  // anchored right next to whichever already-placed node revealed it, and
+  // never moves it again afterwards. This is what lets expanding/collapsing
+  // leave the rest of the graph - and the camera - completely alone: the
+  // revealed subtree grows as a branch out of the node you expanded instead
+  // of the whole layout being recomputed and the view having to re-fit.
+  function makeLayoutPlanner() {
+    var LEVEL_SEP = 170, NODE_SPACING = 70;
+    var positions = {};
+    var nextYByLevel = {};
+
+    function nextY(level) {
+      var key = String(level);
+      var y = nextYByLevel[key] || 0;
+      nextYByLevel[key] = y + NODE_SPACING;
+      return y;
+    }
+
+    return {
+      reset: function () {
+        positions = {};
+        nextYByLevel = {};
+      },
+      get: function (id) {
+        return positions[id] || null;
+      },
+      place: function (id, anchorId, direction) {
+        if (positions[id]) return positions[id];
+        var x, y;
+        if (anchorId && positions[anchorId]) {
+          x = positions[anchorId].x + (direction === "backward" ? -LEVEL_SEP : LEVEL_SEP);
+        } else {
+          x = 0;
+        }
+        y = nextY(x);
+        positions[id] = { x: x, y: y };
+        return positions[id];
+      }
+    };
+  }
+
+  function computeVisibleSet(graph, state, adjacency, layout) {
     var visible = {};
 
     if (state.showEverything) {
@@ -72,16 +113,26 @@ function clientAppSource() {
       // degenerate case (e.g. pure cycle, no clear root) - fall back to showing everything
       graph.nodes.forEach(function (n) {
         if (!n.external) visible[n.id] = true;
+        if (!n.external) layout.place(n.id, null, "forward");
       });
       return visible;
     }
 
-    entries.forEach(function (n) { visible[n.id] = true; });
+    entries.forEach(function (n) {
+      visible[n.id] = true;
+      layout.place(n.id, null, "forward");
+    });
     state.expandedForward.forEach(function (id) {
-      (adjacency.childrenOf[id] || []).forEach(function (c) { visible[c] = true; });
+      (adjacency.childrenOf[id] || []).forEach(function (c) {
+        visible[c] = true;
+        layout.place(c, id, "forward");
+      });
     });
     state.expandedBackward.forEach(function (id) {
-      (adjacency.parentsOf[id] || []).forEach(function (p) { visible[p] = true; });
+      (adjacency.parentsOf[id] || []).forEach(function (p) {
+        visible[p] = true;
+        layout.place(p, id, "backward");
+      });
     });
 
     if (!state.showExternal) {
@@ -113,8 +164,8 @@ function clientAppSource() {
     return parts.join("  ");
   }
 
-  function buildFileVisData(graph, state, adjacency) {
-    var visibleSet = computeVisibleSet(graph, state, adjacency);
+  function buildFileVisData(graph, state, adjacency, layout) {
+    var visibleSet = computeVisibleSet(graph, state, adjacency, layout);
     var visibleNodes = graph.nodes.filter(function (n) {
       if (!visibleSet[n.id]) return false;
       if (state.onlyAffected) return n.changed || n.impacted;
@@ -135,8 +186,9 @@ function clientAppSource() {
       var borderWidth = n.changed ? 4 : n.impacted ? 3 : 1;
       var badge = badgeFor(n, state, adjacency);
       var baseLabel = n.label.split("/").pop();
+      var pos = state.showEverything ? null : layout.get(n.id);
 
-      return {
+      var nodeObj = {
         id: n.id,
         label: badge ? baseLabel + "\\n" + badge : baseLabel,
         title: nodeTitle(n),
@@ -145,6 +197,12 @@ function clientAppSource() {
         shape: n.external || n.crossProjectInterface ? "box" : "ellipse",
         font: { color: "#1b1f24", multi: false }
       };
+      if (pos) {
+        nodeObj.x = pos.x;
+        nodeObj.y = pos.y;
+        nodeObj.fixed = { x: true, y: true };
+      }
+      return nodeObj;
     });
 
     var edges = visibleEdges.map(function (e, i) {
@@ -335,19 +393,33 @@ function clientAppSource() {
     document.getElementById("stats").innerHTML = renderStats(graph);
     renderIsolatedList(graph);
 
+    var layout = makeLayoutPlanner();
+
     function currentData() {
       if (state.mode === "project") return buildProjectVisData(graph);
       if (state.mode === "interfaces") return buildInterfaceVisData(graph);
-      return buildFileVisData(graph, state, adjacency);
+      return buildFileVisData(graph, state, adjacency, layout);
     }
 
-    function networkOptionsFor(mode) {
-      if (mode === "file") {
-        // Deterministic levels (entries left, deeper modules to the right) with
-        // physics off entirely - no force simulation means no jitter, and
-        // positions settle instantly instead of drifting for a second or two.
+    function networkOptionsFor(mode, st) {
+      if (mode === "file" && st && st.showEverything) {
+        // Nothing is collapsed, so there's no "stay put while expanding"
+        // concern here - let vis lay the whole thing out automatically.
         return {
           layout: { hierarchical: { enabled: true, direction: "LR", sortMethod: "directed", levelSeparation: 170, nodeSpacing: 90, treeSpacing: 140 } },
+          physics: false,
+          interaction: { hover: true, tooltipDelay: 120 },
+          edges: { smooth: { type: "cubicBezier", forceDirection: "horizontal", roundness: 0.5 } },
+          nodes: { borderWidth: 1, size: 14 }
+        };
+      }
+      if (mode === "file") {
+        // Progressive disclosure: every node gets an explicit, permanent
+        // (x, y) from the layout planner (see makeLayoutPlanner) instead of
+        // an automatic layout, so expanding/collapsing never reshuffles or
+        // re-fits anything that was already on screen.
+        return {
+          layout: { hierarchical: false },
           physics: false,
           interaction: { hover: true, tooltipDelay: 120 },
           edges: { smooth: { type: "cubicBezier", forceDirection: "horizontal", roundness: 0.5 } },
@@ -367,36 +439,43 @@ function clientAppSource() {
     var edgesDS = new vis.DataSet([]);
     var network = null;
 
-    function freezeOnceStable() {
+    function freezeOnceStable(fit) {
       network.once("stabilizationIterationsDone", function () {
         network.setOptions({ physics: false });
-        // expanding/collapsing or switching modes can easily push nodes
-        // outside the current viewport - recenter so nothing is hidden
-        // off-screen after the layout settles.
-        network.fit({ animation: { duration: 300, easingFunction: "easeInOutQuad" } });
+        if (fit) {
+          network.fit({ animation: { duration: 300, easingFunction: "easeInOutQuad" } });
+        }
       });
     }
 
-    function recreateNetwork() {
+    function recreateNetwork(fit) {
       if (network) network.destroy();
-      network = new vis.Network(container, { nodes: nodesDS, edges: edgesDS }, networkOptionsFor(state.mode));
-      freezeOnceStable();
+      network = new vis.Network(container, { nodes: nodesDS, edges: edgesDS }, networkOptionsFor(state.mode, state));
+      freezeOnceStable(fit !== false);
       wireSelectionEvents();
     }
 
-    function refreshView(recreate) {
+    // 'fit': whether the camera is allowed to pan/zoom to show the new
+    // data. Pass false for an incremental expand/collapse of a single node
+    // (the whole point of the fixed layout is that nothing else should jump
+    // around, including the camera) - true for anything that changes most
+    // of what's on screen anyway (toggling a filter, switching views, reset).
+    function refreshView(recreate, fit) {
+      if (fit === undefined) fit = true;
       var d = currentData();
-      network.setOptions({ physics: networkOptionsFor(state.mode).physics });
+      network.setOptions({ physics: networkOptionsFor(state.mode, state).physics });
       nodesDS.clear(); nodesDS.add(d.nodes);
       edgesDS.clear(); edgesDS.add(d.edges);
       clearDetail();
       if (recreate) {
-        recreateNetwork();
+        recreateNetwork(fit);
       } else {
-        freezeOnceStable();
-        // stabilizationIterationsDone doesn't reliably fire for small/instant
-        // layouts, so also fit immediately rather than relying on it alone.
-        network.fit({ animation: { duration: 300, easingFunction: "easeInOutQuad" } });
+        freezeOnceStable(fit);
+        if (fit) {
+          // stabilizationIterationsDone doesn't reliably fire for small/instant
+          // layouts, so also fit immediately rather than relying on it alone.
+          network.fit({ animation: { duration: 300, easingFunction: "easeInOutQuad" } });
+        }
       }
     }
 
@@ -407,7 +486,7 @@ function clientAppSource() {
       });
       document.getElementById("file-controls").style.display = mode === "file" ? "block" : "none";
       document.getElementById("isolated-wrap").style.display = mode === "file" && graph.nodes.some(function (n) { return n.isIsolated; }) ? "block" : "none";
-      refreshView(true);
+      refreshView(true, true);
     }
 
     document.getElementById("mode-file").addEventListener("click", function () { setMode("file"); });
@@ -424,14 +503,16 @@ function clientAppSource() {
     });
     document.getElementById("show-everything").addEventListener("change", function (e) {
       state.showEverything = e.target.checked;
-      refreshView(false);
+      layout.reset();
+      refreshView(true, true);
     });
     document.getElementById("reset-view").addEventListener("click", function () {
       state.expandedForward = new Set();
       state.expandedBackward = new Set();
       state.showEverything = false;
       document.getElementById("show-everything").checked = false;
-      refreshView(false);
+      layout.reset();
+      refreshView(true, true);
     });
 
     document.getElementById("search").addEventListener("input", function (e) {
@@ -526,32 +607,78 @@ function clientAppSource() {
       return html;
     }
 
+    // Everything reachable from 'id' within the currently visible nodes,
+    // walking edges in both directions - i.e. "the stuff that's actually
+    // connected to this node", as opposed to the rest of whatever else
+    // happens to already be on screen from earlier, unrelated expansions.
+    function reachableWithinVisible(id, visibleIdsSet) {
+      var result = {};
+      result[id] = true;
+      var queue = [id];
+      while (queue.length) {
+        var current = queue.shift();
+        var neighbors = (adjacency.childrenOf[current] || []).concat(adjacency.parentsOf[current] || []);
+        for (var i = 0; i < neighbors.length; i++) {
+          var n = neighbors[i];
+          if (visibleIdsSet[n] && !result[n]) {
+            result[n] = true;
+            queue.push(n);
+          }
+        }
+      }
+      return result;
+    }
+
+    function highlightNode(id) {
+      var all = nodesDS.getIds();
+      var keep;
+      if (state.mode === "file") {
+        var visibleIdsSet = {};
+        all.forEach(function (nid) { visibleIdsSet[nid] = true; });
+        keep = reachableWithinVisible(id, visibleIdsSet);
+      } else {
+        var connected = network.getConnectedNodes(id);
+        keep = {};
+        keep[id] = true;
+        connected.forEach(function (nid) { keep[nid] = true; });
+      }
+      nodesDS.update(all.map(function (nid) {
+        return { id: nid, opacity: keep[nid] ? 1 : 0.15 };
+      }));
+    }
+
+    function showDetailFor(id) {
+      var panel = document.getElementById("detail");
+      if (state.mode === "project") { panel.innerHTML = renderProjectDetail(id); return; }
+      if (state.mode === "interfaces") { panel.innerHTML = renderInterfaceDetail(id); return; }
+
+      panel.innerHTML = renderFileDetail(id);
+      var fwdBtn = document.getElementById("exp-fwd");
+      if (fwdBtn) fwdBtn.addEventListener("click", function () { toggleExpand(id, "forward"); });
+      var bwdBtn = document.getElementById("exp-bwd");
+      if (bwdBtn) bwdBtn.addEventListener("click", function () { toggleExpand(id, "backward"); });
+    }
+
+    // Expands/collapses one node's direct neighbors in the given direction,
+    // without moving the camera or anything already on screen - the newly
+    // revealed nodes just appear as a branch next to 'id' (see
+    // makeLayoutPlanner). Re-selects 'id' afterwards (refreshing the
+    // dataset drops vis's internal selection) so the detail panel and the
+    // "this subtree belongs to this node" highlight stay in sync.
+    function toggleExpand(id, direction) {
+      var set = direction === "backward" ? state.expandedBackward : state.expandedForward;
+      if (set.has(id)) set.delete(id); else set.add(id);
+      refreshView(false, false);
+      network.selectNodes([id]);
+      highlightNode(id);
+      showDetailFor(id);
+    }
+
     function wireSelectionEvents() {
       network.on("selectNode", function (params) {
         var id = params.nodes[0];
-        var connected = network.getConnectedNodes(id);
-        var all = nodesDS.getIds();
-        nodesDS.update(all.map(function (nid) {
-          var dim = nid !== id && connected.indexOf(nid) === -1;
-          return { id: nid, opacity: dim ? 0.15 : 1 };
-        }));
-
-        var panel = document.getElementById("detail");
-        if (state.mode === "project") panel.innerHTML = renderProjectDetail(id);
-        else if (state.mode === "interfaces") panel.innerHTML = renderInterfaceDetail(id);
-        else {
-          panel.innerHTML = renderFileDetail(id);
-          var fwdBtn = document.getElementById("exp-fwd");
-          if (fwdBtn) fwdBtn.addEventListener("click", function () {
-            if (state.expandedForward.has(id)) state.expandedForward.delete(id); else state.expandedForward.add(id);
-            refreshView(false);
-          });
-          var bwdBtn = document.getElementById("exp-bwd");
-          if (bwdBtn) bwdBtn.addEventListener("click", function () {
-            if (state.expandedBackward.has(id)) state.expandedBackward.delete(id); else state.expandedBackward.add(id);
-            refreshView(false);
-          });
-        }
+        highlightNode(id);
+        showDetailFor(id);
       });
 
       network.on("deselectNode", function () {
@@ -559,10 +686,20 @@ function clientAppSource() {
         nodesDS.update(all.map(function (nid) { return { id: nid, opacity: 1 }; }));
         clearDetail();
       });
+
+      network.on("doubleClick", function (params) {
+        if (state.mode !== "file" || state.showEverything) return;
+        var id = params.nodes[0];
+        if (!id) return;
+        var hasMoreDown = (adjacency.childrenOf[id] || []).length > 0;
+        var hasMoreUp = (adjacency.parentsOf[id] || []).length > 0;
+        if (hasMoreDown) toggleExpand(id, "forward");
+        else if (hasMoreUp) toggleExpand(id, "backward");
+      });
     }
 
-    recreateNetwork();
-    refreshView(false);
+    recreateNetwork(true);
+    refreshView(false, true);
 
     // exposed for debugging in devtools (and for automated UI tests)
     window.__moduleGraph = { graph: graph, state: state, getNetwork: function () { return network; } };
@@ -591,7 +728,8 @@ function clientAppSource() {
             document.getElementById("legend-interfaces").style.display = hasInterfaces ? "block" : "none";
             state.expandedForward = new Set();
             state.expandedBackward = new Set();
-            refreshView(false);
+            layout.reset();
+            refreshView(false, true);
             document.getElementById("stats").innerHTML = renderStats(graph);
             renderIsolatedList(graph);
           })
