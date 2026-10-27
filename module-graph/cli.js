@@ -1,19 +1,36 @@
 #!/usr/bin/env node
 const path = require("path");
 const fs = require("fs");
+const crypto = require("crypto");
 const { buildGraph } = require("./src/buildGraph");
 const { renderStaticHtml } = require("./src/renderHtml");
+
+/**
+ * Default report filename when --out isn't given: derived from the
+ * scanned path (slashes/dots/etc replaced so it's a clean single
+ * segment) plus a short random suffix, so running the tool again on
+ * the same or a different folder never silently overwrites the last
+ * report.
+ */
+function defaultOutName(targetDir) {
+  const base = path.basename(path.resolve(targetDir));
+  const sanitized = (base || "project").replace(/[^a-zA-Z0-9_-]+/g, "-").replace(/^-+|-+$/g, "") || "project";
+  const suffix = crypto.randomBytes(3).toString("hex");
+  return `module-graph-${sanitized}-${suffix}.html`;
+}
 
 function parseArgs(argv) {
   const args = {
     target: ".",
-    out: "module-graph-report.html",
+    out: null,
     serve: false,
     port: 4321,
     includeExternal: true,
     enableProjects: true,
     diff: undefined,
     json: null,
+    csv: null,
+    csvNodes: null,
     extraBuiltins: [],
     skipBuiltinFilter: false,
   };
@@ -22,6 +39,8 @@ function parseArgs(argv) {
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--out") args.out = argv[++i];
+    else if (a === "--csv") args.csv = argv[++i];
+    else if (a === "--csv-nodes") args.csvNodes = argv[++i];
     else if (a === "--serve") args.serve = true;
     else if (a === "--port") args.port = Number(argv[++i]);
     else if (a === "--no-external") args.includeExternal = false;
@@ -49,8 +68,10 @@ function printHelp() {
 Usage: node module-graph/cli.js [target-dir] [options]
 
   target-dir           Directory to scan (default: current directory)
-  --out <file.html>     Write a standalone HTML report (default: module-graph-report.html)
+  --out <file.html>     Write a standalone HTML report (default: module-graph-<dir>-<random>.html)
   --json <file.json>    Also write the raw graph data as JSON
+  --csv <file.csv>       Also write the dependency tree as a flat edge table (from,to,kind,...)
+  --csv-nodes <file.csv> Also write one row per file/package with its metadata (depth, roles, diff flags, ...)
   --serve                Start a local server with a live "Rescan" button instead of writing a file
   --port <n>             Port for --serve (default: 4321)
   --no-external          Hide external (node_modules / bare specifier) dependencies
@@ -111,9 +132,22 @@ async function main() {
     console.log(`Wrote graph JSON to ${args.json}`);
   }
 
+  if (args.csv) {
+    const { edgesToCsv } = require("./src/exportCsv");
+    fs.writeFileSync(args.csv, edgesToCsv(graph));
+    console.log(`Wrote dependency table (edges) to ${args.csv}`);
+  }
+
+  if (args.csvNodes) {
+    const { nodesToCsv } = require("./src/exportCsv");
+    fs.writeFileSync(args.csvNodes, nodesToCsv(graph));
+    console.log(`Wrote file/node table to ${args.csvNodes}`);
+  }
+
+  const outFile = args.out || defaultOutName(targetDir);
   const html = renderStaticHtml(graph, { title: path.basename(targetDir) });
-  fs.writeFileSync(args.out, html);
-  console.log(`Wrote report to ${path.resolve(args.out)}`);
+  fs.writeFileSync(outFile, html);
+  console.log(`Wrote report to ${path.resolve(outFile)}`);
 }
 
 main();

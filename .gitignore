@@ -1,5 +1,5 @@
 .idea
 node_modules/
 codemutationtool
-module-graph-report.html
+module-graph-*.html
 *.module-graph.json

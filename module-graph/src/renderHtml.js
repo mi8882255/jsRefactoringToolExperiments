@@ -29,10 +29,15 @@ function page({ title, bodyExtra, dataScript }) {
   #rescan { margin-bottom: 10px; padding: 6px 10px; border-radius: 6px; border: 1px solid #d0d5dd; background: #fff; cursor: pointer; }
   label.toggle { font-size: 12px; display: block; margin-bottom: 10px; }
   #mode-switch { margin-bottom: 10px; }
-  #mode-switch button { font-size: 12px; padding: 5px 10px; border: 1px solid #d0d5dd; background: #fff; cursor: pointer; }
-  #mode-switch button:first-child { border-radius: 6px 0 0 6px; }
-  #mode-switch button:last-child { border-radius: 0 6px 6px 0; border-left: none; }
+  #mode-switch button { font-size: 12px; padding: 5px 10px; border: 1px solid #d0d5dd; background: #fff; cursor: pointer; border-left: none; }
+  #mode-switch button:first-child { border-radius: 6px 0 0 6px; border-left: 1px solid #d0d5dd; }
+  #mode-switch button:last-child { border-radius: 0 6px 6px 0; }
   #mode-switch button.active { background: #4f8ef7; color: #fff; border-color: #4f8ef7; }
+  .detail-btn { display: block; width: 100%; font-size: 12px; text-align: left; padding: 6px 8px; margin-bottom: 6px; border-radius: 6px; border: 1px solid #d0d5dd; background: #f6f8fa; cursor: pointer; }
+  .detail-btn:hover { background: #eef1f4; }
+  #reset-view { font-size: 12px; padding: 5px 10px; border-radius: 6px; border: 1px solid #d0d5dd; background: #fff; cursor: pointer; margin-bottom: 10px; }
+  #isolated-wrap { font-size: 12px; margin-bottom: 10px; }
+  #isolated-wrap summary { cursor: pointer; }
 </style>
 </head>
 <body>
@@ -41,24 +46,32 @@ function page({ title, bodyExtra, dataScript }) {
   <div id="sidebar">
     <h1>${safeTitle}</h1>
     ${bodyExtra || ""}
-    <div id="mode-switch" style="display:none">
-      <button id="mode-file" class="active">File graph</button><button id="mode-project">Project graph</button>
+    <div id="mode-switch">
+      <button id="mode-file" class="active">File graph</button><button id="mode-project" style="display:none">Project graph</button><button id="mode-interfaces" style="display:none">Interfaces</button>
     </div>
     <div id="file-controls">
       <input id="search" type="text" placeholder="Filter by path..." />
       <label class="toggle"><input id="toggle-external" type="checkbox" checked /> Show external packages</label>
       <label class="toggle" id="only-affected-wrap" style="display:none"><input id="only-affected" type="checkbox" /> Show only changed/impacted</label>
+      <label class="toggle"><input id="show-everything" type="checkbox" /> Show everything (skip collapse)</label>
+      <button id="reset-view">Reset to entry points</button>
+      <div id="isolated-wrap" style="display:none"><div id="isolated-list"></div></div>
     </div>
     <div id="legend">
-      <div><span style="background:#22b36b"></span>entry module (no internal importers)</div>
+      <div><span style="background:#22b36b"></span>entry point (nothing imports it)</div>
       <div><span style="background:#4f8ef7"></span>internal module</div>
       <div><span style="background:#a0a4ad"></span>external package</div>
       <div><span style="background:#e5484d"></span>unresolved import</div>
       <div><span style="background:#f5a524"></span>parse error</div>
+      <div style="font-size:11px;color:#888;margin-top:4px">&#9656;N&middot;dD = N files / depth D hidden below &middot; &#9666;N&middot;dD = hidden above (importers)</div>
       <div id="legend-crossproject" style="display:none"><span style="background:#c77dff"></span>cross-project interface</div>
       <div id="legend-diff" style="display:none">
         <div><span style="background:#fff;border:3px solid #d7263d"></span>changed (in diff)</div>
         <div><span style="background:#fff;border:3px solid #f2a900"></span>impacted (imports a changed file)</div>
+      </div>
+      <div id="legend-interfaces" style="display:none">
+        <div><span style="background:#eef2ff;border:2px solid #6366f1;border-radius:2px"></span>interface / abstract class</div>
+        <div><span style="background:#ecfdf5;border:2px solid #10b981"></span>implementing class</div>
       </div>
     </div>
     <div id="stats"></div>
